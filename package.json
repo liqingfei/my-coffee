@@ -1,0 +1,23 @@
+{
+  "name": "my-coffee",
+  "version": "1.0.0",
+  "private": true,
+  "description": "希希咖啡店 - 多 Agent 协同咖啡点单系统",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev:backend": "npm -w packages/backend run dev",
+    "dev:frontend": "npm -w packages/frontend run dev",
+    "build": "npm run build:backend && npm run build:frontend",
+    "build:backend": "npm -w packages/backend run build",
+    "build:frontend": "npm -w packages/frontend run build",
+    "test": "npm -w packages/backend run test",
+    "lint": "npm -w packages/backend run lint"
+  },
+  "devDependencies": {
+    "concurrently": "^8.0.0",
+    "typescript": "^5.0.0"
+  }
+}
