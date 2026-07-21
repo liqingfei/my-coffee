@@ -65,6 +65,7 @@ datasource db {
 
 > 仍**不引入 enum**：状态用 String + 应用层 `lib/status.ts` 校验，保持 provider 可移植（CR 复杂度预算：不为"更类型化"加迁移负担）。
 > **PG 事实**：PostgreSQL 下 `String` 无注解默认映射 `text`，**不存在** MySQL `varchar(191)` 默认截断陷阱——故显式 `@db.VarChar(n)` 从"防截断必需"降级为"schema 自描述的显式长度约束"（保留注解：显式优于隐式、跨引擎可读；**model 块注解一行不重构**）。`@db.Decimal(10,2)` / `@db.Text` 在 PG 均为合法原生类型，全部保留。
+> **引擎版本**：本实例实测 **PostgreSQL 16**（`SHOW server_version` = 16.13）。schema/migration 已在 16.13 全绿实测（C1 基线 `20260721125210_init` + jest 全量 + 生产路径冒烟），版本口径与 A1 架构描述交叉对齐。
 
 ### 1.4 其余不变
 `@id @default(autoincrement())`、`@unique`、`@relation`、`DateTime @default(now())` 均 postgresql 兼容，照旧。
@@ -200,7 +201,7 @@ C1 单一边界：数据层 + Prisma 客户端 + 序列化边界 + migration。*
 
 ## 8. 风险与未决
 
-- **RDS 真实 `max_connections`**：A1 §5 取 ≥200 假设；需 @aidbs-demo 控制台确认（**C3 门禁，不挡 C1/C2**）。PG 常见默认 100，`20×3=60≤100` 余量仍够；真实值一给即核，不足或实例上限 >20 则按 A1 §5 触发 RDS Proxy。
+- **RDS `max_connections`（已实测落定，2026-07-21）**：本实例 `SHOW max_connections = 2420`（`superuser_reserved_connections = 20`，有效可用 2400）；实测时全实例连接水位 15/2420。FC 侧 `instanceConcurrency(20) × connection_limit(3) = 60`，占有效可用 2.5%，安全边际 40×——A1 §5 原下限假设与 PG 默认值量级口径全部作废，真值取代假设（TL 独立直查交叉一致）。**调参方法论不变**：`max_connections` 随实例规格变，上调 `connection_limit` 或 `instanceConcurrency` 前先 `SHOW max_connections` 核实例真值；水位逼近上限再按 A1 §5 引入 RDS Proxy。实测走现有连接栈（`tests/jest.env.js buildTestDatabaseUrl()` 装配 URL），非控制台二手值。
 - **`?connection_limit` 与 s.yaml `CONNECTION_LIMIT` 双源**：见 §3 回路，C1/C3 前闭合，避免静默漂移。
 - **Decimal 序列化回归**：C1 必须加契约断言——`typeof price/totalPrice/fee === 'number'`，**并加嵌套 `order.delivery?.fee === 'number'`**（GET /api/orders/:id 带配送单路径，CR 🔴 指定；QA A4 第 5 转换点已列此断言 + E2E NaN 兜底，🟢 收下）。本设计 §2 是其实现依据。
 - **items JSON 内金额**：写路径已是 number，读路径 parse 即 number，**不**受 Decimal 影响——但若未来有人改成"读后从 Decimal 重算 items"，会引入字符串；§2 注释需挡掉这种改法。
