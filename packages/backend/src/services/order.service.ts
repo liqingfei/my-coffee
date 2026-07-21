@@ -1,7 +1,8 @@
-import { Order } from "@prisma/client";
+import { Delivery, Order } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { badRequest, notFound } from "../lib/errors";
 import { ORDER_FLOW, assertTransition } from "../lib/status";
+import { serializeDelivery } from "./delivery.service";
 
 // 订单项（落库为 JSON 字符串，响应时反序列化回数组）
 export interface OrderItem {
@@ -19,8 +20,9 @@ export interface CreateOrderInput {
   customerAddress: unknown;
 }
 
-// 序列化的订单响应：items 反序列化为数组，并内嵌 delivery（如有）
-export type OrderResponse = Omit<Order, "items"> & {
+// 序列化的订单响应：items 反序列化为数组，totalPrice 读边界转 number，并内嵌 delivery（如有）
+export type OrderResponse = Omit<Order, "items" | "totalPrice"> & {
+  totalPrice: number;
   items: OrderItem[];
   delivery?: unknown;
 };
@@ -37,8 +39,19 @@ function requireNonEmptyString(value: unknown, field: string): string {
 function serializeOrder(
   order: Order & { delivery?: unknown },
 ): OrderResponse {
+  // items 经 JSON.parse 回来已是 number（price/subtotal 在 stringify 前已转），别再转
   const items = JSON.parse(order.items) as OrderItem[];
-  return { ...order, items, delivery: order.delivery ?? null };
+  return {
+    ...order,
+    totalPrice: Number(order.totalPrice), // 读边界转换：Decimal→number
+    items,
+    // 嵌套 delivery.fee 同走读边界转换，复用 serializeDelivery（一次转换、两处出口）；
+    // delivery?: unknown 是 createOrder（无 include）与 list/get（include）两种形态的联合，
+    // 调用点结构化 cast 为 Delivery，禁改 any（CR tsc 处方）。
+    delivery: order.delivery
+      ? serializeDelivery(order.delivery as Delivery)
+      : null,
+  };
 }
 
 // 创建订单。totalPrice 由服务端按 DB 单价权威重算，忽略客户端传入的任何价格字段。
@@ -78,13 +91,15 @@ export async function createOrder(
       throw badRequest(`商品已下架，不可点：${menuItem.name}`);
     }
 
-    const subtotal = round2(menuItem.price * quantity);
+    // 读边界转换：Decimal→number，subtotal 计算与 items 价格快照共用
+    const unitPrice = Number(menuItem.price);
+    const subtotal = round2(unitPrice * quantity);
     totalPrice += subtotal;
     orderItems.push({
       menuItemId: menuItem.id,
       name: menuItem.name,
       quantity,
-      price: menuItem.price,
+      price: unitPrice,
       subtotal,
     });
   }
