@@ -40,15 +40,16 @@ function requireNonEmptyString(value: unknown, field: string): string {
 //（不引运行时 schema 反射、不引第三方校验库，CR 88qpqrfj 约束）。
 // PG 超长抛 `value too long` 是引擎守住不变式（永不静默截断，好）；应用层只负责把超长
 // 在 create 入口翻译成正确状态码 400，不让它落到 500 通道（CR 945yc7s7 裁决）。
-export const ORDER_FIELD_MAXLEN = {
+const ORDER_FIELD_MAXLEN = {
   customerName: 100, // schema: @db.VarChar(100)
   customerPhone: 32, // schema: @db.VarChar(32)
   customerAddress: 255, // schema: @db.VarChar(255)
 } as const;
 
-// 共享长度校验 helper：抛既有 badRequest（复用 400 通道），不另建校验框架。
-// delivery create 入口仅接收 orderId、无用户字符串，故无调用点（不为假想输入建校验）。
-export function assertMaxLen(value: string, max: number, field: string): void {
+// 长度校验 helper：抛既有 badRequest（复用 400 通道），不另建校验框架。
+// delivery create 入口仅接收 orderId、无用户字符串，故无调用点（不为假想输入建校验）；
+// 当前零跨模块 import，故不 export——哪天 delivery 真需要长度校验了再导出（CR bcsj5kjd）。
+function assertMaxLen(value: string, max: number, field: string): void {
   if (value.length > max) {
     throw badRequest(`${field} 超长（上限 ${max} 字符）`);
   }
