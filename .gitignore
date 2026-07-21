@@ -4,7 +4,7 @@ dist/
 *.log
 .DS_Store
 
-# 生成物：SQLite 数据库、测试库、覆盖率报告
+# 生成物：覆盖率报告（*.db / *.db-journal 兜底忽略本地遗留文件，当前 PG 无 DB 文件入库）
 *.db
 *.db-journal
 coverage/

@@ -5,7 +5,7 @@ const port = Number(process.env.PORT ?? 3001);
 const app = createApp();
 
 async function main() {
-  // 预热 Prisma 连接：让查询引擎与 SQLite 连接在首个请求前就绪，
+  // 预热 Prisma 连接：让查询引擎与数据库连接在首个请求前就绪，
   // 避免冷启动竞态导致首请求偶发 500（QA 验收追踪项）。
   await prisma.$connect();
   // listen 的 'error'（如 EADDRINUSE）是异步事件，需显式捕获走统一启动失败处理，
