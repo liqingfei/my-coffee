@@ -1,17 +1,25 @@
-# A2 数据层设计 — Prisma SQLite → RDS MySQL（方案二）
+# A2 数据层设计 — Prisma SQLite → RDS PostgreSQL（方案二 · PG 修订 v2）
 
 > 作者：@Dev-claude（@agent-rhx6ueqf）｜对应 CodeMatrix #13 / GitHub issue #2
-> 状态：产出，待 @agent-gtuw85fn CR 评审 + @agent-8f7cny5f TL 验收
+> 状态：**PG 修订 v2**（2026-07-21 人类裁定用 PostgreSQL——RDS 实例实测 TCP 5432 开 / 3306 关，引擎实锤 PG），待 @agent-gtuw85fn CR 复审（六条处方逐项）+ @agent-8f7cny5f TL 确认。A5/A6 验收的**引擎无关不变式全数继承**，本版仅重审 provider 相关口径。
 > 范围：仅数据/入口层（schema、Prisma 客户端、序列化边界、migration、测试库）。
 > 不动业务路由/状态机/校验；前端零改动。所有结论均**实读 packages/backend/src 核对**，非二手转述。
 
 本文是 C1（后端改造）的施工图：写明"改什么、为什么、改在哪一行"，并把跨角色数字与 A1 锁死对齐。
 
+> **PG 修订 v2 变更摘要**（相对 MySQL 版 `07a2136`）：
+> - 核心两处：`provider = "postgresql"`（§1.1）+ URL scheme `mysql://`→`postgresql://`（端口 3306→5432）
+> - §1.3 措辞改 PG 事实：PG `String` 默认 `text`、无 varchar(191) 截断陷阱；`@db.VarChar(n)`/`@db.Text` 从"防截断必需"降级为"显式语义选择"，**注解全保留、model 块一行不动**
+> - §3 钉死：PG 下 Prisma query 参数仍名 `connection_limit`，串尾写法一字不变
+> - §4 重生成目标换 PG 空库 `mycoffee_dev`（admin 账号自建 dev+test 两库），流程与零手写 SQL 原则原样
+> - §7 测试库 URL scheme 同步；§8/§9 口径同步
+> - **引擎无关不变式一条未动**：5 落点 Number 转换（含嵌套 `order.delivery?.fee`）、`connection_limit=3` 串尾单源、优雅关闭顺序、`createApp()` 不改、typeof 契约断言矩阵、线协议 JSON number
+
 ---
 
 ## 0. 设计目标与硬约束
 
-1. **provider sqlite → mysql**，对接 RDS MySQL（VPC 内网）。
+1. **provider sqlite → postgresql**，对接 RDS PostgreSQL（VPC 内网）。
 2. **金额用 Decimal(10,2)** 落库与计算，杜绝浮点误差；但**线协议保持 JSON number**，前端零改动（满足 CR 向后兼容门禁——一期 8 commits 在 main，契约变即 bug）。
 3. **connection_limit = 3** 锁死，与 A1 DESIGN §5 / s.yaml `CONNECTION_LIMIT` 交叉校验一致（TL 验收项：两边对不上=设计不通过）。
 4. **migration 历史整体重生成**，不手写 SQL、不留 down 脚本（Prisma 无原生 down migration，详见 §4）。
@@ -24,11 +32,11 @@
 ### 1.1 provider 切换
 ```prisma
 datasource db {
-  provider = "mysql"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 ```
-`DATABASE_URL` 形如 `mysql://USER:PASS@RDS_HOST:3306/DB?connection_limit=3`（连接池见 §3）。
+`DATABASE_URL` 形如 `postgresql://USER:PASS@RDS_HOST:5432/DB?connection_limit=3`（连接池见 §3）。
 
 ### 1.2 金额字段 Float → Decimal(10,2)
 | 模型.字段 | 现状 | 改为 | 理由 |
@@ -41,24 +49,25 @@ datasource db {
 
 > 关键后果：Prisma 读 `Decimal` 列返回 **Prisma.Decimal 实例**，JSON 序列化会变成**字符串**。若不处理，前端 `price.toFixed(2)` 对字符串调用 → 运行期 TypeError / NaN。**唯一解法 = 在响应边界转 Number**（§2）。
 
-### 1.3 String 显式长度（mysql 要求 VARCHAR 长度；长文本用 TEXT）
+### 1.3 String 显式长度（显式长度约束；长文本用 @db.Text）
 | 模型.字段 | 改为 | 理由 |
 | --- | --- | --- |
 | `MenuItem.name` | `String @db.VarChar(100)` | 商品名 |
 | `MenuItem.description` | `String @db.VarChar(500)` | 描述 |
 | `MenuItem.category` | `String @db.VarChar(50)` | 分类枚举值 |
 | `MenuItem.imageUrl` | `String? @db.VarChar(500)` | URL |
-| `Order.items` | `String @db.Text` | **JSON 字符串 blob**，必须 TEXT，不能 VARCHAR（默认 191 会截断） |
+| `Order.items` | `String @db.Text` | **JSON 字符串 blob**，无界文本的显式语义选择（PG `String` 默认即 `text`、无截断；显式 `@db.Text` = 显式优于隐式，与 MySQL 版口径一致） |
 | `Order.status` | `String @db.VarChar(20)` | 状态机取值 |
 | `Order.customerName` | `String @db.VarChar(100)` | |
 | `Order.customerPhone` | `String @db.VarChar(32)` | |
 | `Order.customerAddress` | `String @db.VarChar(255)` | |
 | `Delivery.status` | `String @db.VarChar(20)` | |
 
-> 仍**不引入 enum**：状态用 String + 应用层 `lib/status.ts` 校验，保持 provider 可移植（CR 复杂度预算：不为"更类型化"加迁移负担）。长度值取保守上界，留余量不卡业务。
+> 仍**不引入 enum**：状态用 String + 应用层 `lib/status.ts` 校验，保持 provider 可移植（CR 复杂度预算：不为"更类型化"加迁移负担）。
+> **PG 事实**：PostgreSQL 下 `String` 无注解默认映射 `text`，**不存在** MySQL `varchar(191)` 默认截断陷阱——故显式 `@db.VarChar(n)` 从"防截断必需"降级为"schema 自描述的显式长度约束"（保留注解：显式优于隐式、跨引擎可读；**model 块注解一行不重构**）。`@db.Decimal(10,2)` / `@db.Text` 在 PG 均为合法原生类型，全部保留。
 
 ### 1.4 其余不变
-`@id @default(autoincrement())`、`@unique`、`@relation`、`DateTime @default(now())` 均 mysql 兼容，照旧。
+`@id @default(autoincrement())`、`@unique`、`@relation`、`DateTime @default(now())` 均 postgresql 兼容，照旧。
 
 ---
 
@@ -112,7 +121,7 @@ export const prisma = new PrismaClient({
   datasources: { db: { url: process.env.DATABASE_URL } },
 });
 ```
-并在 `DATABASE_URL` 串尾带 `?connection_limit=3`。
+并在 `DATABASE_URL` 串尾带 `?connection_limit=3`。**PG 下同参数名**：Prisma 的 PostgreSQL connector 同样识别 `connection_limit` query 参数（与 MySQL connector 同名），串尾写法一字不变——单一事实源决策引擎无关。
 
 **为什么不另读 `CONNECTION_LIMIT` env（否决 deploy 方案 b）**：s.yaml 同时设了 `DATABASE_URL` 和 `CONNECTION_LIMIT="3"`。若代码再读 `CONNECTION_LIMIT` 拼进客户端，就出现**两个 env 控制同一事实**——一旦漂移（一个改一个没改），连接池与设计不符却静默。单一事实源 = 把 3 钉在 `DATABASE_URL` 串里（凭证所在的那条 env），删掉/忽略 s.yaml 的 `CONNECTION_LIMIT`（或仅保留作人类注释，代码不读）。**一个事实，一处定义。**
 
@@ -128,16 +137,17 @@ export const prisma = new PrismaClient({
 
 ### 为什么必须重生成（不能改现有 init）
 现有历史：`prisma/migrations/20260721015603_init/` + `migration_lock.toml`（lock = **sqlite**）。
-- 该 init 的 SQL 是 **SQLite DDL**；`prisma migrate deploy` 在 mysql 上跑 SQLite DDL 必失败。
-- `migration_lock.toml` 的 provider 也必须 = mysql，否则 Prisma 直接报错。
-- 结论：provider 切换后，**旧历史整段作废**，必须用 mysql provider 重新生成一条全新历史。
+- 该 init 的 SQL 是 **SQLite DDL**；`prisma migrate deploy` 在 PostgreSQL 上跑 SQLite DDL 必失败。
+- `migration_lock.toml` 的 provider 也必须 = postgresql，否则 Prisma 直接报错。
+- 结论：provider 切换后，**旧历史整段作废**，必须用 postgresql provider 重新生成一条全新历史。
 
 ### 步骤（C1 执行，设计阶段不跑）
 1. 改 `schema.prisma`（§1）。
 2. 删 `prisma/migrations/` 全目录 + `migration_lock.toml`。
-3. 指向**空 mysql 库**，`prisma migrate dev --name init` → 生成新的 `YYYYMMDD_init/`（mysql DDL）+ 新 lock。
+3. 指向**空 PG 库 `mycoffee_dev`**，`prisma migrate dev --name init` → 生成新的 `YYYYMMDD_init/`（PG DDL）+ 新 lock（provider=postgresql）。
 4. 应用启动 / 容器 CMD 用 `prisma migrate deploy`（**只 apply 已提交历史，不 dev**）——A1 Dockerfile.fc / s.yaml CMD 已是 `npx prisma migrate deploy && node fc-server.js`，一致。
-5. 本地 dev：`DATABASE_URL=mysql://...dev...` 后 `migrate dev`。
+5. 本地 dev / C1 执行：`DATABASE_URL=postgresql://...mycoffee_dev?connection_limit=3` 后 `migrate dev`。
+6. **provisioning（admin 自建，不等外部）**：`~/.aliyun-env` 的 admin 账号有 CREATE DATABASE 权，`mycoffee_dev`（空）+ `mycoffee_test` 两库由 C1/C2 侧自建——Prisma `migrate dev`/`db push` 对缺失库自动建库，一条 DDL 的事，不再向 @aidbs-demo 要库名。
 
 ### 回滚（无 down migration——这是 Prisma 的物理事实）
 - **不手写 down SQL**（CR 门禁已修正：不留手写 SQL）。
@@ -173,24 +183,24 @@ C1 单一边界：数据层 + Prisma 客户端 + 序列化边界 + migration。*
 
 ---
 
-## 7. 测试库改造（test MySQL，对齐 QA A4 已验收矩阵）
+## 7. 测试库改造（test PostgreSQL 库，对齐 QA A4 已验收矩阵）
 
 现状：`tests/jest.globalSetup.js` 对 `file:./test.db` 跑 `prisma db push --force-reset`；`jest.setup.js` 设 `DATABASE_URL=file:./test.db`。sqlite 文件，无并发问题。
 
-改 test MySQL（QA A4 msg 35ag5pz1 已定调，本设计给施工细节）：
-1. **测试库实例**：独立 mysql（Docker 或 RDS test 实例），独立库名 `mycoffee_test`，与 dev/prod 隔离。`jest.setup.js` 设 `DATABASE_URL=mysql://...mycoffee_test?connection_limit=2`（**测试连接池调低**，避免多文件/多连接打爆 test 实例）。
+改 test PG 库（QA A4 msg 35ag5pz1 已定调，本设计给施工细节）：
+1. **测试库**：同实例独立库 `mycoffee_test`（admin 自建，见 §4 步 6），与 dev/prod 隔离。`jest.setup.js` 设 `DATABASE_URL=postgresql://...mycoffee_test?connection_limit=2`（**测试连接池调低**，避免多文件/多连接打爆 test 实例）。
 2. **globalSetup 跑一次** `prisma migrate reset --force`（drop+重放全部 migration+reseed）——**验证 §4 新历史能干净 apply**（C1 真实回归风险），整 run 一次。
 3. **文件间隔离改 TRUNCATE+reseed**（不再每文件 reset）——对齐现状 `db push --force-reset` 的隔离级别，更快。reset 验历史、TRUNCATE 管隔离，一个概念干一件事。
-4. **runInBand** 保持（jest.config 已设）——单进程串行，避免并发 reset/truncate 互踩；mysql 下尤其重要。
+4. **runInBand** 保持（jest.config 已设）——单进程串行，避免并发 reset/truncate 互踩；PG 下同样重要。
 5. seed：复用 `prisma/seed.ts` 逻辑（注意它 `deleteMany` 全表后重写菜单——TRUNCATE 路径要等价处理外键顺序：先 delivery 后 order 后 menu，与 seed.ts 现顺序一致）。
 
-> 测试库就绪**阻塞** C2，不阻塞本文评审。test MySQL 实例由 @aidbs-demo 提供时间线（与 dev/prod 同批）。
+> 测试库 provisioning **不阻塞**本文评审、也不阻塞 C2：admin 账号自建 `mycoffee_test`（§4 步 6，与 dev 库同批，一条 DDL）。
 
 ---
 
 ## 8. 风险与未决
 
-- **RDS 真实 `max_connections`**：A1 §5 取 ≥200 假设；需 @aidbs-demo 控制台确认。若 <200 或实例上限 >20，启用 RDS Proxy（A1 扩容路径）。本设计 connection_limit=3 在该假设下成立（20×3=60≤200，余量 30%）。
+- **RDS 真实 `max_connections`**：A1 §5 取 ≥200 假设；需 @aidbs-demo 控制台确认（**C3 门禁，不挡 C1/C2**）。PG 常见默认 100，`20×3=60≤100` 余量仍够；真实值一给即核，不足或实例上限 >20 则按 A1 §5 触发 RDS Proxy。
 - **`?connection_limit` 与 s.yaml `CONNECTION_LIMIT` 双源**：见 §3 回路，C1/C3 前闭合，避免静默漂移。
 - **Decimal 序列化回归**：C1 必须加契约断言——`typeof price/totalPrice/fee === 'number'`，**并加嵌套 `order.delivery?.fee === 'number'`**（GET /api/orders/:id 带配送单路径，CR 🔴 指定；QA A4 第 5 转换点已列此断言 + E2E NaN 兜底，🟢 收下）。本设计 §2 是其实现依据。
 - **items JSON 内金额**：写路径已是 number，读路径 parse 即 number，**不**受 Decimal 影响——但若未来有人改成"读后从 Decimal 重算 items"，会引入字符串；§2 注释需挡掉这种改法。
@@ -199,10 +209,10 @@ C1 单一边界：数据层 + Prisma 客户端 + 序列化边界 + migration。*
 
 ## 9. 验收对照（给 CR / TL 的逐项核对表）
 
-- [ ] provider=mysql；金额三字段 Decimal(10,2)；String 全显式长度，items=@db.Text（§1）
+- [ ] provider=postgresql；金额三字段 Decimal(10,2)；String 全显式长度、items=@db.Text（PG 均合法原生类型，model 块注解不重构）（§1）
 - [ ] Decimal→Number 在 §2 四函数 5 落点读边界（含 serializeOrder 嵌套 `delivery.fee` 复用 serializeDelivery），routes 不动，线协议=JSON number，前端零改动
 - [ ] connection_limit=3 经 DATABASE_URL 串注入，单事实源，与 A1 §5/s.yaml 一致（§3）
 - [ ] migrations 整体重生成，无手写 SQL、无 down（§4）
 - [ ] createApp() 已是工厂，C1 不改入口；prisma 单例读连接池纳入 C1（§6）
 - [ ] 优雅关闭引用 A1 §6，数据层不持长事务（§5）
-- [ ] test MySQL：globalSetup reset 一次 + 文件间 TRUNCATE + runInBand + 低 connection_limit（§7）
+- [ ] test PG 库：globalSetup reset 一次 + 文件间 TRUNCATE + runInBand + 低 connection_limit（§7）
