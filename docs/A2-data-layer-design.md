@@ -83,6 +83,7 @@ datasource db {
   `return { ...order, totalPrice: Number(order.totalPrice), items, delivery: order.delivery ? serializeDelivery(order.delivery) : null };`
   > `items` 来自 `JSON.parse(order.items)`，是**落库时已 stringified 的 number**（写路径已是 number），parse 回来即 number，**无需再转**——这点要写进代码注释，否则后人会重复加 Number。
   > 嵌套 `delivery.fee` 是**第 5 个** Decimal→Number 落点（经 serializeOrder 出口）。`serializeDelivery` 因此服务两条路径：delivery.service.ts 三个独立端点 + 此处经 serializeOrder 的嵌套路径。实现上把 `serializeDelivery` 从 delivery.service.ts **export**，order.service.ts **import** 复用——单一实现，两处引用。
+  > **C1 类型注意（CR 🟢 评审处方，必须照做）**：`serializeOrder` 现签名 `order: Order & { delivery?: unknown }`，`order.delivery` 是 `unknown`，直接喂给按 `Delivery` 签名的 `serializeDelivery` 过不了 tsc。二选一：把 `serializeDelivery` 参数签成结构化类型（如 `d: { fee: Prisma.Decimal | number } & Record<string, unknown>`），或在调用点显式 cast。**禁止**把 `delivery?: unknown` 改成 `any` 糊过去。
 
 **`src/services/menu.service.ts`**
 - `listAvailableMenu` 现状**直返 Prisma 行**（`MenuItem[]`），无序列化层。新增映射：
