@@ -21,7 +21,7 @@
 
 1. **provider sqlite → postgresql**，对接 RDS PostgreSQL（VPC 内网）。
 2. **金额用 Decimal(10,2)** 落库与计算，杜绝浮点误差；但**线协议保持 JSON number**，前端零改动（满足 CR 向后兼容门禁——一期 8 commits 在 main，契约变即 bug）。
-3. **connection_limit = 3** 锁死，与 A1 DESIGN §5 / s.yaml `CONNECTION_LIMIT` 交叉校验一致（TL 验收项：两边对不上=设计不通过）。
+3. **connection_limit = 3** 锁死，与 A1 DESIGN §5 一致（s.yaml 侧已按 §3 单源化移除 `CONNECTION_LIMIT`；TL 验收项：两边对不上=设计不通过）。
 4. **migration 历史整体重生成**，不手写 SQL、不留 down 脚本（Prisma 无原生 down migration，详见 §4）。
 5. 入口导出形式**已是 `createApp()` 工厂**，C1 不改入口（已实读 `src/app.ts` 确认，详见 §6）。
 
