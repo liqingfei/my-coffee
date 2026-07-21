@@ -266,3 +266,26 @@ h1 {
   padding: 8px 12px;
   border-radius: 4px;
 }
+
+.banner-success {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: #eaf6ea;
+  color: var(--brand-dark);
+  border: 1px solid #bfe3bf;
+  padding: 8px 12px;
+  border-radius: 4px;
+  margin: 12px 0;
+}
+
+.banner-close {
+  border: none;
+  background: transparent;
+  color: var(--brand-dark);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+}
