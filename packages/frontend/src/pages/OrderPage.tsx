@@ -62,7 +62,7 @@ export function OrderPage() {
       <h1>下单</h1>
       {error && <p className="error">{error}</p>}
       {loading && <p>加载菜单中…</p>}
-      {!loading && menu.length === 0 && <p>暂无可点商品</p>}
+      {!loading && !error && menu.length === 0 && <p>暂无可点商品</p>}
       {!loading && menu.length > 0 && (
       <form onSubmit={submit}>
         <div className="grid">
