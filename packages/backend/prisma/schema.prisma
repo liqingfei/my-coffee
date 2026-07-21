@@ -1,0 +1,49 @@
+// 希希咖啡店 数据库 Schema（一期：M1 点单 + M2 配送）
+// provider 使用 SQLite（本地无 Docker/PostgreSQL，一期以 SQLite 替代）。
+// 注意：SQLite 的 Prisma provider 不支持 enum，状态字段用 String 承载，
+// 合法取值与流转在应用层（services）集中校验。
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// 咖啡菜单项
+model MenuItem {
+  id          Int      @id @default(autoincrement())
+  name        String
+  description String
+  price       Float // 单价（元）。一期沿用 TL 方案的 Float；金额计算在应用层四舍五入到 2 位。
+  category    String // 分类：咖啡 / 茶饮 / 甜点
+  imageUrl    String?
+  available   Boolean  @default(true)
+  createdAt   DateTime @default(now())
+}
+
+// 订单
+model Order {
+  id              Int       @id @default(autoincrement())
+  items           String // JSON 字符串：[{menuItemId, name, quantity, price, subtotal}]
+  totalPrice      Float
+  status          String    @default("pending") // pending/confirmed/preparing/delivering/completed
+  customerName    String
+  customerPhone   String
+  customerAddress String
+  createdAt       DateTime  @default(now())
+  delivery        Delivery?
+}
+
+// 配送单（与订单 1:1，orderId 唯一）
+model Delivery {
+  id            Int      @id @default(autoincrement())
+  orderId       Int      @unique
+  order         Order    @relation(fields: [orderId], references: [id])
+  status        String   @default("pending") // pending/picked_up/in_transit/delivered
+  fee           Float    @default(5.0) // 一期固定配送费 5 元
+  estimatedTime Int? // 预计送达时间（分钟）
+  createdAt     DateTime @default(now())
+}

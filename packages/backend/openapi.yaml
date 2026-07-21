@@ -1,0 +1,187 @@
+openapi: 3.0.3
+info:
+  title: 希希咖啡店 API（my-coffee 一期）
+  description: M1 咖啡点单 + M2 配送服务。金额由服务端权威计算；状态流转受状态机约束。
+  version: 1.0.0
+servers:
+  - url: http://localhost:3001
+paths:
+  /api/menu:
+    get:
+      summary: 查询可用菜单
+      parameters:
+        - name: category
+          in: query
+          schema: { type: string }
+          description: 按分类过滤（如 咖啡 / 茶饮 / 甜点）
+      responses:
+        "200":
+          description: 仅返回 available=true 的菜单项
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/MenuItem" }
+  /api/orders:
+    post:
+      summary: 创建订单（totalPrice 服务端按 DB 单价重算，忽略客户端价格）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [items, customerName, customerPhone, customerAddress]
+              properties:
+                items:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    required: [menuItemId, quantity]
+                    properties:
+                      menuItemId: { type: integer }
+                      quantity: { type: integer, minimum: 1 }
+                customerName: { type: string }
+                customerPhone: { type: string }
+                customerAddress: { type: string }
+      responses:
+        "201": { description: 创建成功, content: { application/json: { schema: { $ref: "#/components/schemas/Order" } } } }
+        "400": { description: 参数非法 / 空购物车 / 商品不存在或下架 / 请求体格式错误 }
+    get:
+      summary: 订单列表
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: 订单数组
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Order" }
+  /api/orders/{id}:
+    get:
+      summary: 订单详情（含关联配送单）
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200": { description: 订单详情, content: { application/json: { schema: { $ref: "#/components/schemas/Order" } } } }
+        "404": { description: 订单不存在 }
+  /api/orders/{id}/status:
+    patch:
+      summary: 订单状态流转（仅允许到下一合法状态）
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  enum: [confirmed, preparing, delivering, completed]
+      responses:
+        "200": { description: 流转成功 }
+        "400": { description: 非法跳变 / 缺少 status }
+        "404": { description: 订单不存在 }
+  /api/deliveries:
+    post:
+      summary: 创建配送单（顾客信息继承自订单；fee 固定 5）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [orderId]
+              properties:
+                orderId: { type: integer }
+      responses:
+        "201": { description: 创建成功, content: { application/json: { schema: { $ref: "#/components/schemas/Delivery" } } } }
+        "400": { description: orderId 非法 }
+        "404": { description: 订单不存在 }
+        "409": { description: 该订单已存在配送单 }
+  /api/deliveries/{id}:
+    get:
+      summary: 配送状态查询
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200": { description: 配送单, content: { application/json: { schema: { $ref: "#/components/schemas/Delivery" } } } }
+        "404": { description: 配送单不存在 }
+  /api/deliveries/{id}/status:
+    patch:
+      summary: 配送状态流转（仅允许到下一合法状态）
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  enum: [picked_up, in_transit, delivered]
+      responses:
+        "200": { description: 流转成功 }
+        "400": { description: 非法跳变 / 缺少 status }
+        "404": { description: 配送单不存在 }
+components:
+  schemas:
+    MenuItem:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        description: { type: string }
+        price: { type: number }
+        category: { type: string }
+        imageUrl: { type: string, nullable: true }
+        available: { type: boolean }
+        createdAt: { type: string, format: date-time }
+    OrderItem:
+      type: object
+      properties:
+        menuItemId: { type: integer }
+        name: { type: string }
+        quantity: { type: integer }
+        price: { type: number }
+        subtotal: { type: number }
+    Order:
+      type: object
+      properties:
+        id: { type: integer }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/OrderItem" }
+        totalPrice: { type: number }
+        status:
+          type: string
+          enum: [pending, confirmed, preparing, delivering, completed]
+        customerName: { type: string }
+        customerPhone: { type: string }
+        customerAddress: { type: string }
+        createdAt: { type: string, format: date-time }
+        delivery:
+          nullable: true
+          allOf: [{ $ref: "#/components/schemas/Delivery" }]
+    Delivery:
+      type: object
+      properties:
+        id: { type: integer }
+        orderId: { type: integer }
+        status:
+          type: string
+          enum: [pending, picked_up, in_transit, delivered]
+        fee: { type: number }
+        estimatedTime: { type: integer, nullable: true }
+        createdAt: { type: string, format: date-time }

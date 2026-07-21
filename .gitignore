@@ -1,1 +1,10 @@
-node_modules/\ndist/\n.env\n*.log\n.DS_Store
+node_modules/
+dist/
+.env
+*.log
+.DS_Store
+
+# 生成物：SQLite 数据库、测试库、覆盖率报告
+*.db
+*.db-journal
+coverage/
