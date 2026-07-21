@@ -14,10 +14,15 @@ export function OrderPage() {
   });
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
 
   useEffect(() => {
-    api.getMenu().then(setMenu).catch((e) => setError((e as Error).message));
+    api
+      .getMenu()
+      .then(setMenu)
+      .catch((e) => setError((e as Error).message))
+      .finally(() => setLoading(false));
   }, []);
 
   const setItemQty = (id: number, q: number) =>
@@ -45,7 +50,7 @@ export function OrderPage() {
         customerPhone: form.customerPhone.trim(),
         customerAddress: form.customerAddress.trim(),
       });
-      navigate(`/orders/${order.id}`);
+      navigate(`/orders/${order.id}`, { state: { fromSubmit: true } });
     } catch (err) {
       setError((err as Error).message);
       setSubmitting(false);
@@ -56,6 +61,9 @@ export function OrderPage() {
     <section>
       <h1>下单</h1>
       {error && <p className="error">{error}</p>}
+      {loading && <p>加载菜单中…</p>}
+      {!loading && !error && menu.length === 0 && <p>暂无可点商品</p>}
+      {!loading && menu.length > 0 && (
       <form onSubmit={submit}>
         <div className="grid">
           {menu.map((item) => (
@@ -117,6 +125,7 @@ export function OrderPage() {
           {submitting ? "提交中…" : "提交订单"}
         </button>
       </form>
+      )}
     </section>
   );
 }
