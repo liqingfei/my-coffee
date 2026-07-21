@@ -101,6 +101,66 @@ describe("POST /api/orders", () => {
   });
 });
 
+// 顾客字段长度上限校验（CR 945yc7s7 裁决）：create 入口经 assertMaxLen 前置校验，
+// 超长翻译为 400（PG 抛 `value too long` 会落到 500 通道，状态码错误）。
+// 「非静默截断」引擎不变式由 string-length.test.ts 钉死（not 201，不钉状态码），
+// 本套件钉的是状态码契约：400 + 错误信息含字段名与上限。
+describe("顾客字段超长 -> 400（assertMaxLen 前置校验）", () => {
+  it("customerName 超 100 -> 400，错误信息含字段名与上限", async () => {
+    const { americana } = await seedMenu();
+    const res = await request(app)
+      .post("/api/orders")
+      .send({
+        items: [{ menuItemId: americana.id, quantity: 1 }],
+        ...customer,
+        customerName: "名".repeat(101),
+      });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("customerName");
+    expect(res.body.error).toContain("100");
+  });
+
+  it("customerPhone 超 32 -> 400", async () => {
+    const { americana } = await seedMenu();
+    const res = await request(app)
+      .post("/api/orders")
+      .send({
+        items: [{ menuItemId: americana.id, quantity: 1 }],
+        ...customer,
+        customerPhone: "1".repeat(33),
+      });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("customerPhone");
+  });
+
+  it("customerAddress 超 255 -> 400（非 500）", async () => {
+    const { americana } = await seedMenu();
+    const res = await request(app)
+      .post("/api/orders")
+      .send({
+        items: [{ menuItemId: americana.id, quantity: 1 }],
+        ...customer,
+        customerAddress: "址".repeat(256),
+      });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("customerAddress");
+    expect(res.body.error).toContain("255");
+  });
+
+  it("三字段恰好上限（100/32/255）-> 201，边界不误伤", async () => {
+    const { americana } = await seedMenu();
+    const res = await request(app)
+      .post("/api/orders")
+      .send({
+        items: [{ menuItemId: americana.id, quantity: 1 }],
+        customerName: "名".repeat(100),
+        customerPhone: "1".repeat(32),
+        customerAddress: "址".repeat(255),
+      });
+    expect(res.status).toBe(201);
+  });
+});
+
 describe("GET /api/orders 与 /api/orders/:id", () => {
   async function createOneOrder() {
     const { americana } = await seedMenu();
