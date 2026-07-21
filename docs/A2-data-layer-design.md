@@ -79,9 +79,10 @@ datasource db {
   `const price = Number(menuItem.price);`
 - L81：`const subtotal = round2(price * quantity);`（用本地 `price: number`，避免 Decimal×number 得 Decimal 再喂 round2）
 - L87：`price,`（快照即上面的 `price: number`）
-- `serializeOrder()` L37-42：`Order.totalPrice` 现为 Decimal，展开 `...order` 会带字符串。改为显式覆盖：
-  `return { ...order, totalPrice: Number(order.totalPrice), items, delivery: order.delivery ?? null };`
+- `serializeOrder()` L37-42：`Order.totalPrice` 现为 Decimal，展开 `...order` 会带字符串；且 `order.delivery` 是嵌套 Delivery 行，其 `fee` 同为 Decimal，`?? null` 直通会把 fee 以字符串送出（前端 `fee.toFixed(2)` 对字符串调用 → TypeError——这是 GET /api/orders/:id 带配送单的真实路径，CR 🔴 指出）。改为显式覆盖，**嵌套 delivery 复用 delivery.service.ts 抽出的 `serializeDelivery`**（同一转换器、两条出口，不复制第二份转换逻辑）：
+  `return { ...order, totalPrice: Number(order.totalPrice), items, delivery: order.delivery ? serializeDelivery(order.delivery) : null };`
   > `items` 来自 `JSON.parse(order.items)`，是**落库时已 stringified 的 number**（写路径已是 number），parse 回来即 number，**无需再转**——这点要写进代码注释，否则后人会重复加 Number。
+  > 嵌套 `delivery.fee` 是**第 5 个** Decimal→Number 落点（经 serializeOrder 出口）。`serializeDelivery` 因此服务两条路径：delivery.service.ts 三个独立端点 + 此处经 serializeOrder 的嵌套路径。实现上把 `serializeDelivery` 从 delivery.service.ts **export**，order.service.ts **import** 复用——单一实现，两处引用。
 
 **`src/services/menu.service.ts`**
 - `listAvailableMenu` 现状**直返 Prisma 行**（`MenuItem[]`），无序列化层。新增映射：
@@ -89,10 +90,10 @@ datasource db {
   （返回类型仍兼容 `MenuItem` 形状，只是 price 变 number；如需类型精确可定义 `MenuItemResponse`。）
 
 **`src/services/delivery.service.ts`**
-- `createDelivery`/`getDelivery`/`transitionDeliveryStatus` 三处**直返**带 `fee` 的 Delivery。抽一个 `serializeDelivery(d)`：`{ ...d, fee: Number(d.fee) }`，三处 return 统一走它（与 order 的 `serializeOrder` 对称，单一职责：出口转金额）。
+- `createDelivery`/`getDelivery`/`transitionDeliveryStatus` 三处**直返**带 `fee` 的 Delivery。抽一个 **export** 的 `serializeDelivery(d)`：`{ ...d, fee: Number(d.fee) }`，三处 return 统一走它（与 order 的 `serializeOrder` 对称，单一职责：出口转金额）。**并供 order.service.ts 的 serializeOrder import 复用**（嵌套 delivery 路径，见上）——一个转换器覆盖全部 4 个含 `fee` 的出口，无第二份逻辑。
 
 ### 为什么是"读边界转"而不是"全局 toJSON 拦截"
-全局拦截 Prisma.Decimal.prototype.toJSON 是隐式魔法、跨文件难追、CR 复杂度预算会打回。显式 `Number()` 在 4 个函数里各一行，可读、可测、零魔法。**如非必要，勿增实体。**
+全局拦截 Prisma.Decimal.prototype.toJSON 是隐式魔法、跨文件难追、CR 复杂度预算会打回。显式 `Number()` 落在 4 个函数的 5 个点位（createOrder 单价、serializeOrder 合计、serializeOrder 嵌套 delivery.fee、listAvailableMenu 单价、serializeDelivery 配送费），各一行，可读、可测、零魔法。**如非必要，勿增实体。**
 
 ### 精度安全
 咖啡单价 ≤ 几百、2 位小数，`Number(Decimal)` 在 `Number.MAX_SAFE_INTEGER`(2^53) 内且 2 位小数可精确表示，无损。合计同理。无需 BigDecimal 库。
@@ -161,7 +162,7 @@ PM/CR/TL 关心的跨角色接口，已实读确认：
 | --- | --- | --- |
 | `src/app.ts` 导出 | `export function createApp()` **工厂** | **否**——已是工厂，fc-server.js `require("./dist/app").createApp` 直接命中，零入口改动 |
 | `src/lib/prisma.ts` | `new PrismaClient()` 无参 | **是**——加 `datasources.db.url`（§3），connection_limit 走 URL 串 |
-| 金额序列化 | sqlite 下 number 直通 | **是**——§2 的 4 处 `Number()` |
+| 金额序列化 | sqlite 下 number 直通 | **是**——§2 的 5 处 `Number()`（4 函数；含 serializeOrder 嵌套 `delivery.fee` 复用 serializeDelivery） |
 | schema | sqlite/Float/无长度 | **是**——§1 |
 | migrations | sqlite 历史 | **是**——§4 重生成 |
 
@@ -190,7 +191,7 @@ C1 单一边界：数据层 + Prisma 客户端 + 序列化边界 + migration。*
 
 - **RDS 真实 `max_connections`**：A1 §5 取 ≥200 假设；需 @aidbs-demo 控制台确认。若 <200 或实例上限 >20，启用 RDS Proxy（A1 扩容路径）。本设计 connection_limit=3 在该假设下成立（20×3=60≤200，余量 30%）。
 - **`?connection_limit` 与 s.yaml `CONNECTION_LIMIT` 双源**：见 §3 回路，C1/C3 前闭合，避免静默漂移。
-- **Decimal 序列化回归**：C1 必须加契约断言（typeof price/totalPrice/fee === 'number'，QA A4 已列 typeof 契约 + E2E NaN 兜底，🟢 收下）。本设计 §2 是其实现依据。
+- **Decimal 序列化回归**：C1 必须加契约断言——`typeof price/totalPrice/fee === 'number'`，**并加嵌套 `order.delivery?.fee === 'number'`**（GET /api/orders/:id 带配送单路径，CR 🔴 指定；QA A4 第 5 转换点已列此断言 + E2E NaN 兜底，🟢 收下）。本设计 §2 是其实现依据。
 - **items JSON 内金额**：写路径已是 number，读路径 parse 即 number，**不**受 Decimal 影响——但若未来有人改成"读后从 Decimal 重算 items"，会引入字符串；§2 注释需挡掉这种改法。
 
 ---
@@ -198,7 +199,7 @@ C1 单一边界：数据层 + Prisma 客户端 + 序列化边界 + migration。*
 ## 9. 验收对照（给 CR / TL 的逐项核对表）
 
 - [ ] provider=mysql；金额三字段 Decimal(10,2)；String 全显式长度，items=@db.Text（§1）
-- [ ] Decimal→Number 在 §2 四函数读边界，routes 不动，线协议=JSON number，前端零改动
+- [ ] Decimal→Number 在 §2 四函数 5 落点读边界（含 serializeOrder 嵌套 `delivery.fee` 复用 serializeDelivery），routes 不动，线协议=JSON number，前端零改动
 - [ ] connection_limit=3 经 DATABASE_URL 串注入，单事实源，与 A1 §5/s.yaml 一致（§3）
 - [ ] migrations 整体重生成，无手写 SQL、无 down（§4）
 - [ ] createApp() 已是工厂，C1 不改入口；prisma 单例读连接池纳入 C1（§6）
