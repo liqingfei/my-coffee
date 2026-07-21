@@ -165,7 +165,7 @@ console.log("E2E-5 异常路径 / P0 防重提交 / P0-3 banner / P0-1 二次确
   const currentStep = await page.locator(".timeline li.current").textContent();
   check("配送当前状态=待取货", currentStep === "待取货", `(current=${currentStep})`);
   const feeText = (await page.locator("text=/配送费/").textContent()).replace(/\s+/g, " ");
-  check("配送费显示 ¥5.00", /¥5/.test(feeText), `(${feeText})`);
+  check("配送费显示 ¥5.00", /¥5\.00/.test(feeText), `(${feeText})`);
   check("追踪页显示收货人", (await page.locator("text=/收货人/").count()) > 0);
 
   // --- P0-3: 直访无 banner（新 page 全新 history，不用 reload 避免保留 pushState state） ---
