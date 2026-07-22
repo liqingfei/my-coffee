@@ -42,10 +42,27 @@ export REGION="${REGION:-cn-hangzhou}"
 # 目标 ECS（单机 standalone）
 export ECS_ID="${ECS_ID:-}"
 
-# ACR（镜像走 VPC 端点 push/pull，不走公网；忘注入则 fail-loud，勿静默回落公网/错命名空间）
-export ACR_REGISTRY="${ACR_REGISTRY:?缺少 ACR_REGISTRY（ACR VPC 端点，见 lib/env.example）}"
-export ACR_NAMESPACE="${ACR_NAMESPACE:?缺少 ACR_NAMESPACE（ACR 命名空间，见 lib/env.example）}"
-export ACR_INSTANCE_ID="${ACR_INSTANCE_ID:-}"
+# ACR（镜像走 VPC 端点 push/pull，不走公网）
+# 默认值=本项目已知的 ACR 企业版实例资源标识（host/namespace/instance-id 均为
+# 非凭证资源 ID，见门禁⑥，可入库；换环境/换实例时用环境变量覆盖，不改本文件）。
+# 留 fail-loud 兜底：若显式置空且无默认（理论上不发生）仍点名，勿静默回落公网。
+export ACR_REGISTRY="${ACR_REGISTRY:-codematrix-dev-registry-vpc.cn-hangzhou.cr.aliyuncs.com}"
+export ACR_NAMESPACE="${ACR_NAMESPACE:-codematrix}"
+export ACR_INSTANCE_ID="${ACR_INSTANCE_ID:-cri-16ux7uiujvf8lfeg}"
+[[ -n "$ACR_REGISTRY" && -n "$ACR_NAMESPACE" ]] \
+  || die "ACR_REGISTRY/ACR_NAMESPACE 解析为空（见 lib/env.example）"
+
+# RDS PostgreSQL（方案二 DB；端点+库名为非凭证资源 ID 可入库，口令只走 ~/.aliyun-env）
+# ④ 直连端点：DescribeDBInstanceNetInfo 实测本实例仅暴露 rwlb（读写分离代理）内网端点，
+#    即 RDS 的 VPC 内网地址，fc_user 直连可用——非「需 pgm-xxx.pg 主实例端点」误判。
+export RDS_PG_ENDPOINT="${RDS_PG_ENDPOINT:-pgm-1udy8leas753wge4.rwlb.rds.aliyuncs.com}"
+export RDS_PG_DB_NAME="${RDS_PG_DB_NAME:-mycoffee_prod}"
+
+# FC VPC 配置（FC 函数与 RDS 同 VPC/同 vSwitch = 内网可达 RDS 的前提）
+# VPC/vSwitch 取自 RDS DescribeDBInstanceNetInfo；SG=codematrix-fc-eni（DescribeSecurityGroups 实测）
+export FC_VPC_ID="${FC_VPC_ID:-vpc-bp1pbo0j6ru12qqa5bm4z}"
+export FC_VSWITCH_ID="${FC_VSWITCH_ID:-vsw-bp1a50ro3oqfc7cys6m93}"
+export FC_SG_ID="${FC_SG_ID:-sg-bp199se1hm6jqjfuhwqf}"
 
 # OSS（无公网 ECS 经内网签名 URL 下载文件）
 export OSS_BUCKET="${OSS_BUCKET:-}"
