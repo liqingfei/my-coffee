@@ -77,6 +77,8 @@
 
 **最大实例数必须是配置值，不是假设（CR ②）**：FC 默认弹性伸缩，若实例数无硬上限，流量打满无节制扩实例终会 807×3=2421 > 2420 触顶，数学账崩（807 实例对咖啡点单不现实，但硬上限把"留给流量/规格变动的余量被侵蚀"的缝封死）。故 `maximumInstanceCount=20` 写入 s.yaml 钉死——让 60≤2420 成为定理（40× 余量，余量极充足）。部署时以 FC3 API/控制台实际字段为准（字段名可能为 `maximumInstanceCount` 或经控制台等价设置），关键是实例数确有 20 硬上限；若 fc3 component 不直接接受该 prop，部署后用控制台或 UpdateFunction 补设等价效果。
 
+> **Drift 注（见 §七）**：`maximumInstanceCount=20` 在 FC3.0 schema 无 flat 字段（CreateFunctionInput / UpdateFunctionInput / PutScalingConfigInput 均无，SDK `@alicloud/fc20230330` 实核），`maxInstances` 只在 `PutScalingConfig` 的 `horizontalScalingPolicies[].ScalingPolicy` 内（需 auto-scaling rule: metric+target，非简单 cap）。`{"maximumInstances":20}` 大概率 InvalidParameter（schema）非 AccessDenied（policy）。scaling=运维策略非部署步骤，03 降 no-op+报账 log，折进 TODO v2 走通报前控制台人定（与删 `cr:CreateRepository` / repo ARN 收窄 / OSS 语句整块删 / FC trigger ARN 子路径补授 `functions/my-coffee-proxy/triggers/*` 同批五件，@aidbs-demo 走通报前合并办）。**审定值 20 硬账不丢**（zgn7xu3x），走通报 gate 核 scaling=❌「未定义 FC3.0 schema 故」非 AccessDenied 非全绿；04/C4 不 gate 此项（正交）。
+
 **pool(3) < concurrency(10) 是有意排队，非碰巧（CR ②）**：单实例 10 并发只有 3 条 DB 连接，峰值最多 7 个请求在池上排队等。连接是稀缺资源、排队是正确行为，本期咖啡点单流量下接受此选择；最坏排队深度 7。若实测 DB 延迟成为主导，上调 `connection_limit` 至 5（20×5=100 仍 ≤2420，余量极充足）——这是有意识的调参旋钮，不是"碰巧选了 3"。**注意 2420 是本实例实测值、非普适常数**——RDS 实例规格变则真值变（缩容/换规格族都会动它）。上调 `connection_limit` 前先 `SHOW max_connections` 核实例当前真值，确保「实例数×connection_limit」仍留余量；方法论（总连接 ≤ 真值、留 ≥30% 余量）不变，变的是真数。
 
 **跨角色交叉校验**：后端数据层设计的 `connection_limit` 必须等于本表的 **3**；若后端拟取不同值，两份设计对不上 = 设计不通过（TL 验收项）。`instanceConcurrency=10` 由本设计固定，后端不另设。
@@ -112,6 +114,22 @@ SIGTERM/SIGINT → server.close()（拒新连接）→ drain 存量请求（带�
 03-fc-deploy     s deploy（s.yaml）部署/更新 FC 函数；FC 从 ACR VPC 拉镜像；幂等可重跑
 04-healthcheck   curl FC 免ICP 域名 /api/health + /api/menu + /；校验镜像 tag
 ```
+
+> **Drift 注（2026-07-22 实跑后补，PM plan-sync per CR wtrwqdzj 路由 / CR🟢 95us6nem 重审 + 真跑 CreateFunction green 实证 nr4uzthr）**：03 部署机制经三段 pivot 落定，与本节原「`s deploy（s.yaml）`」表述 drift 如下——
+>
+> 1. **原 `s deploy`（s.yaml）→ 弃**。root cause：`s 3.1.10`/`fc3 0.1.22` 组合无原生 EcsRamRole 路径（fc3 client `_credential` 对 `__provider:custom` profile 不 wire，4 路穷尽实证；旁证 `@alicloud/credentials` default chain 通，断点在 s/fc3 wiring）。CR xyw6o3wt 裁 pivot aliyun CLI 直调 FC3.0（好品味：custom-container=镜像 URI 引用→零代码包暂存→OSS 权限面整块消除）。
+> 2. **aliyun CLI fc-open**（ROA `--version 2023-03-30 --endpoint 5884645900446711.cn-hangzhou.fc.aliyuncs.com --mode EcsRamRole`）→ GetFunction ✅ 实跑证（四坐标全通：EcsRamRole 鉴权链 / 端点 / 版本 2023-03-30 / fc_route_get 三态首发分流；DATABASE_URL 值长=116 真值对账）。BUT CreateFunction POST 跑炸：fc-open `--body` 原样透传不加工任何前缀（`@file` curl 语法 / `file://` / `--body -` stdin 三枚实证均不展开，CLI parse 期拒读）→ 无法经文件传 body（inline `$(<file)` 让 DATABASE_URL 进 argv 破承重安全设计，CR/TL 驳回；标尺=最小暴露非「绝对不可得」）。
+> 3. **→ node SDK helper（b3'）**（CR wtrwqdzj 裁 + TL akn8uhs6 认 + CR nnjyxwri 收敛双裁合一）：03 bash 编排（fc_route_get 三态 / trap 清理 / _tmpf 登记 / 日志报账 / 幂等主循环）全 🟢 审过**零改**，只换 fc_api 单闸口内脏（当初收口设计兑现红利）。helper 契约：`node fc_api.js <METHOD> <PATH> [BODYFILE]` typed 方法分派（`@alicloud/fc20230330@4.7.9` getFunction/createFunction/updateFunction/createTrigger，`new m.XRequest({body})` wrapper），body 经 `fs.readFile(BODYFILE)` 程序传 never argv/log；凭证 `new Credential({type:'ecs_ram_role'})`（`@alicloud/credentials@2.4.5` default export=Credential 类 getCredential 单数，纯 EcsRamRole STS 不回退静态 AK = 铁律①）；错误硬过滤只出 ErrorCode/Message/RequestId（SDK 错误对象有时回显请求体，过滤=门禁⑥ native 满足，不 `JSON.stringify(e)`）。CR🟢 95us6nem 重审四把尺 + 加尺 SDK 形状沙箱实证（钉版安装非文档信仰）+ 封签第九验字节一致。
+>
+> **真跑实证（2026-07-22 23:34 nr4uzthr）**：IMAGE_TAG=35f9252 ./03-fc-deploy.sh 端到端 **CreateFunction ✅ green**——函数 my-coffee-proxy 已建（runtime=custom-container / image=`…my-coffee-fc:35f9252` digest `96bf5d67…` / state=Pending 待 04 image-pull+冷启 / memorySize512·timeout60·instanceConcurrency10 审定值 / vpcConfig set / environmentVariables keys=[DATABASE_URL,FRONTEND_DIST,NODE_ENV,PORT,SHUTDOWN_TIMEOUT_MS] / DATABASE_URL 值长=116 真值，值未印）；GetFunction→FunctionNotFound→fc_route_get return 1→CreateFunction POST 分流正确，SDK helper 机制生产资源端到端实证通过。**settle 双半满足**（CR🟢 95us6nem + 真跑 CreateFunction green）。
+>
+> **不变项**：4 action 集（GetFunction / CreateFunction|UpdateFunction / CreateTrigger）⊆ S2 六写名单；Dockerfile.fc 封签 fcd43385…e8e 零动（第九验字节一致）；s.yaml 头注转「声明参考非执行入口」（flow-seq 修保留）；幂等 404 分流（FunctionNotFound=预期首发→Create，存在→Update）；`acrInstanceId=cri-16ux7uiujvf8lfeg` 钉死（ACR 企业版+-vpc 镜像 host，不钉 FC 拉镜像端点解析错必挂；GetFunction 响应不回显该 input-only 字段，04 须验 image-pull 不挂端点解析）；memorySize512/timeout60/instanceConcurrency10（审定值三源一致：s.yaml↔03↔fc-server.js）；EcsRamRole 不回退静态 AK。
+>
+> **CreateTrigger AccessDenied（RAM 缺口，非机制问题）**：真跑首跑 CreateTrigger ❌ AccessDenied（403 / `caller is not authorized to perform 'fc:CreateTrigger' on resource 'acs:fc:cn-hangzhou:5884645900446711:functions/my-coffee-proxy/triggers/http'` / RequestId `1-6a60e291-15ccc054-37a1225fda73`）= CR 预判的 ARN 子路径残险兑现（DEMODeploy 现挂 `functions/my-coffee-proxy` 作用域，trigger 子路径 `functions/my-coffee-proxy/triggers/*` 未覆盖→403）。**非脚本 bug**（helper 错误形状归一化 blob→fc_die 透出 RequestId，surface 不死暗处，跑炸即 surface 纪律执行）。球 @aidbs-demo 控制台补 `fc:CreateTrigger` on `acs:fc:cn-hangzhou:5884645900446711:functions/my-coffee-proxy/triggers/*`（子路径收窄非 `functions/*` 全局），补后 Deploy 自重跑 03（幂等：GetFunction→exists→UpdateFunction PUT 同镜像+CreateTrigger 命中→success）→ 04。函数已建无 HTTP entry（trigger 待 ARN 补）；回滚=IMAGE_TAG=<旧digest> 重跑 03 UpdateFunction 换镜像（digest 固定可复现）。
+>
+> **04 拉取鉴权 deferred**：FC 函数侧服务角色需 `cr:PullRepository` 该 repo（非 DEMODeploy ECS 侧角色，FC 侧另一授权面），04 拉不动再补，不进本轮 RAM。撞墙时频道报名（per CR 3mrsti4s 新审计纪律「往后新增 RAM action 先频道报名再添」）再 @aidbs-demo 配 FC 侧服务角色。
+>
+> **教训（CR-提议团队账，CR okkj5h8x 认账，待 team-confirmed 升 team-conventions）**：「验过≠可迁移——每个 CLI flag 语法必须在实际被调的那个 CLI 上验」（GET 探针不能证 POST body 展开，相邻路径证明力为零）；「文档与实证冲突时实证为权威：Theory loses, every time」。
 
 - FC 换镜像/代码可直接 `s deploy` 覆盖（UpdateFunction PUT，免本地重建函数）。
 - 回滚：`IMAGE_TAG=<旧tag/digest> ./03-fc-deploy.sh` 重跑滚回旧镜像。镜像可固定 digest。
