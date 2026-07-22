@@ -265,7 +265,7 @@ acr_token() {
   printf '%s' "$resp" | python3 -c '
 import sys,json,base64
 d=json.load(sys.stdin)
-user=d.get("TempUserName") or d.get("username") or d.get("UserName") or ""
+user=d.get("TempUsername") or d.get("TempUserName") or d.get("username") or d.get("UserName") or ""
 tok=d.get("EncodeToken") or d.get("authorizationToken") or d.get("AuthorizationToken") or ""
 # EncodeToken 已是 base64；若返回明文 token 再 base64 一次
 import binascii
