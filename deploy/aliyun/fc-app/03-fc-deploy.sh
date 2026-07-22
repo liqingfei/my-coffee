@@ -64,12 +64,14 @@ FC_IMAGE="${ACR_REGISTRY}/${ACR_NAMESPACE}/my-coffee-fc:${IMAGE_TAG}"
 # fc-open ROA 鉴权+端点基参（--endpoint/--version 覆盖打到 FC3.0 管理域；产品表不挡 ROA 签名）
 FC_ARGS=(--endpoint "$FC_MGMT_ENDPOINT" --version "$FC_API_VERSION" "${AUTH_ARGS[@]}")
 
-# fc_api <METHOD> <path> [body-file] —— body 走临时文件 @file（DATABASE_URL 不进 argv/日志）
+# fc_api <METHOD> <path> [body-file] —— body 走临时文件 file://（aliyun CLI v3 文件读取前缀；
+#   非 curl 的 @file——@file 被原样作 body 字符串发出，FC JSON 解析在首字符 '@' 处炸，
+#   首跑 1-6a60d405 实证。DATABASE_URL 经文件不进 argv/日志，chmod600+trap 清理）。
 #   stdout=响应，stderr 透传；退出码=aliyun 退出码（调用方按形状分流）
 fc_api() {
   local method="$1" path="$2" bodyfile="${3:-}"
   if [ -n "$bodyfile" ]; then
-    aliyun fc-open "$method" "$path" "${FC_ARGS[@]}" --body "@${bodyfile}"
+    aliyun fc-open "$method" "$path" "${FC_ARGS[@]}" --body "file://${bodyfile}"
   else
     aliyun fc-open "$method" "$path" "${FC_ARGS[@]}"
   fi
@@ -104,7 +106,7 @@ fc_die() {
 # build_function_config <with_name:1|0> <out-file>
 #   生成 FC3.0 CreateFunctionInput/UpdateFunctionInput JSON（camelCase）。
 #   DATABASE_URL 单源：消费 ~/.aliyun-env 现成装配值注入 environmentVariables，03 不二次拼装；
-#   值经 python3 environ 传入 → 写临时文件（@file），不进 argv/不进日志（只报键名+长度）。
+#   值经 python3 environ 传入 → 写临时文件（file:// 读），不进 argv/不进日志（只报键名+长度）。
 #   memorySize/timeout/instanceConcurrency 消费 s.yaml 审定值（zgn7xu3x 审'd），不另造数。
 #   customContainerConfig.acrInstanceId 钉死（CR 预宣锚①：不钉 FC 拉镜像端点解析错必挂）。
 build_function_config() {
