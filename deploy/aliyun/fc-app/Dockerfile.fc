@@ -1,0 +1,42 @@
+# Dockerfile.fc — my-coffee FC custom-container 镜像（方案二：单函数托管 /api + 静态 + RDS PostgreSQL）
+# 构建上下文为仓库根目录：
+#   docker build -f deploy/aliyun/fc-app/Dockerfile.fc -t <tag> .
+# 设计阶段模板，待 DESIGN.md 评审通过 + 后端 Prisma sqlite→postgresql 迁移落地后 bake 生效。
+FROM node:20-alpine AS build
+WORKDIR /app
+COPY package.json package-lock.json ./
+COPY packages/backend/package.json ./packages/backend/
+COPY packages/frontend/package.json ./packages/frontend/
+# schema 前置：postinstall `prisma generate` 在 npm ci 期间触发，须 schema.prisma 在场
+# （CR 第4项 build 撞点 = postinstall generate 时 schema 缺席 → npm ci 炸于 line 10）
+COPY packages/backend/prisma ./packages/backend/prisma
+RUN npm ci
+COPY packages/backend ./packages/backend
+COPY packages/frontend ./packages/frontend
+# 后端：Prisma generate（迁移后为 postgresql provider）+ tsc 编译
+RUN cd packages/backend && npx prisma generate && npx tsc -p tsconfig.json
+# 前端：Vite 构建
+RUN cd packages/frontend && npx vite build
+
+FROM node:20-alpine
+WORKDIR /app
+ENV NODE_ENV=production
+COPY package.json package-lock.json ./
+COPY packages/backend/package.json ./packages/backend/
+COPY packages/frontend/package.json ./packages/frontend/
+# 多阶段带过 build stage 已安装+已生成的完整 node_modules（含 @prisma/client runtime 面 +
+# .prisma 生成面 + prisma CLI）→ runtime 零 npm ci = 零 postinstall 触发面 → generate 与
+# CLI 缺席两个特殊情况一起消失（CR 第4项 runtime 撞点 = --omit=dev 砍 prisma devDep →
+# postinstall `prisma generate` 无 CLI 炸于 && 前，后接显式 generate 走不到）。
+# 镜像体积换正确性（demo 可接受；体积成问题再分层切 deps/--omit=dev 带 .prisma 单带方案）。
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/packages/backend/dist ./packages/backend/dist
+COPY --from=build /app/packages/backend/prisma ./packages/backend/prisma
+COPY --from=build /app/packages/frontend/dist ./frontend-dist
+COPY deploy/aliyun/fc-app/fc-server.js ./packages/backend/fc-server.js
+WORKDIR /app/packages/backend
+ENV FRONTEND_DIST=/app/frontend-dist \
+    PORT=9000
+EXPOSE 9000
+# 启动前 migrate deploy（幂等）；见 DESIGN.md 第七节"并发 migrate 竞态"风险与缓解
+CMD ["sh","-c","npx prisma migrate deploy && node fc-server.js"]
