@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 01-build-images.sh — 本地构建 my-coffee FC custom-container 镜像（方案二）
-# 设计阶段模板：待 DESIGN.md 评审通过 + 后端 Prisma sqlite→postgresql 迁移落地后执行。
+# DESIGN.md 已 CR🟢+TL 验收通过、Prisma sqlite→postgresql 迁移已落 main（7c0d58a）；执行前 ~/.aliyun-env 注入 AK+ACR（common.sh :? fail-loud）。
 set -euo pipefail
 source "$(dirname "$0")/../lib/common.sh"
 

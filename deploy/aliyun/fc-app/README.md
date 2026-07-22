@@ -1,6 +1,6 @@
 # fc-app 形态 — 方案二（FC + RDS PostgreSQL）整体上 FC
 
-> **状态：方案设计阶段产出物，未执行。** 待 `DESIGN.md` 经 CR review + TL 验收通过、RDS PostgreSQL 就绪、后端 Prisma sqlite→postgresql 迁移落地后，认领实现任务再执行 01→04。
+> **状态：产物就绪，待执行。** `DESIGN.md` 已 CR🟢+TL 验收通过、Prisma sqlite→postgresql 迁移已落 main（7c0d58a）；待 RDS PostgreSQL 就绪（③④ 直连端点+prod 库）+ AK 落盘后执行 01→04。
 
 ## 形态
 单个 FC3 custom-container 函数同时托管 `/api`（后端 Express）与 `/`（前端 Vite 静态），DB = RDS PostgreSQL（VPC 内网）。FC 实例无状态，数据全落 RDS，持久可靠。对外入口 = FC HTTP 触发器 + 免 ICP 域名（fcapp.run）。

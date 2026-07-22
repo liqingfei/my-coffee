@@ -14,7 +14,7 @@
 ## 方案二关键约束（CR 门禁）
 - 优雅关闭顺序：`SIGTERM → server.close() 拒新 → drain → prisma.$disconnect() → exit`（`fc-app/fc-server.js`）
 - 连接池数学：`instanceConcurrency(10) × connection_limit(3) = 60 ≤ RDS max_connections(2420 实测真值)`，余量 40× 极充足；超阈值启用 RDS Proxy
-- 待 RDS PostgreSQL 就绪 + 后端 Prisma sqlite→postgresql 迁移落地后执行 01→04
+- 待 RDS PostgreSQL 就绪（③ 主实例直连端点+prod 库）后执行 01→04；Prisma sqlite→postgresql 迁移已落 main（7c0d58a）
 
 ## 一、形态决策
 

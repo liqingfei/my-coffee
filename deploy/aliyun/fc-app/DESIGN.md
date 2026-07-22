@@ -115,7 +115,7 @@ SIGTERM/SIGINT → server.close()（拒新连接）→ drain 存量请求（带�
 
 - FC 换镜像/代码可直接 `s deploy` 覆盖（UpdateFunction PUT，免本地重建函数）。
 - 回滚：`IMAGE_TAG=<旧tag/digest> ./03-fc-deploy.sh` 重跑滚回旧镜像。镜像可固定 digest。
-- 迁移（migrate deploy）：本期方案为 FC 实例冷启动时容器 CMD 跑 `prisma migrate deploy`（幂等，Prisma migrations 表保证不重复应用）；**已知风险**：多实例同时冷启动并发 migrate 有小窗口竞态。缓解：`instanceConcurrency=10` + 本期低流量，竞态概率低；若出现，提取 migrate 为部署期一次性 `s local invoke` 或独立 migrate 函数（记录为后续优化，不本期实现）。
+- 迁移（migrate deploy）：本期方案为 FC 实例冷启动时容器 CMD 跑 `prisma migrate deploy`（幂等，Prisma migrations 表保证不重复应用）。**并发安全**：本项目 Prisma（prisma@5.22.0，schema-engine 二进制内置 `SELECT pg_advisory_lock(72707369)`）在 PG 上以 advisory lock 串行化并发 migration 应用，故多实例同时冷启动不会并发改 schema（非 correctness 竞态）；余 concern 是 lock-wait 延迟（突发冷启动排队），本期 `instanceConcurrency=10` + 本期低流量使概率低，规模化成问题再提取 migrate 为部署期一次性 `s local invoke` 或独立 migrate 函数（记录为后续优化，不本期实现）。
 
 ## 八、风险清单
 
@@ -124,7 +124,7 @@ SIGTERM/SIGINT → server.close()（拒新连接）→ drain 存量请求（带�
 | RDS 未就绪 | 阻塞实测部署，不阻塞设计；需 @aidbs-demo 给时间线+VPC 连接串+凭证 | @aidbs-demo |
 | 连接池数学对不上后端 | connection_limit 锁定 =3，两份设计交叉校验 | 部署+后端+CR |
 | 并发 migrate 竞态 | 本期低流量 + instanceConcurrency 控制；必要时提取独立 migrate | 部署 |
-| migrate deploy 每次冷启动跑（CR 非阻塞） | Prisma migration lock 保证并发安全，但规模化后是冷启动延迟来源；真成问题再挪进 03-fc-deploy 脚本，本期不动 | 部署 |
+| migrate deploy 每次冷启动跑（CR 非阻塞） | Prisma migrate deploy 用 `pg_advisory_lock`（本项目 prisma@5.22.0 schema-engine 内置 `SELECT pg_advisory_lock(72707369)`）串行化并发应用、保证不重复改 schema；规模化后 lock-wait 成冷启动延迟来源，真成问题再挪进 03-fc-deploy 脚本，本期不动 | 部署 |
 | HTTP 触发器 authType=anonymous（CR 非阻塞） | 点单 API 公网裸露无鉴权限流，demo 阶段接受；上线/正式环境须加鉴权（FC 自定义授权/网关层）或限流 | 部署 |
 | FC 平台 SIGTERM grace 实际值未核（CR 非阻塞） | C3 部署前必核平台文档实际 grace 值，SHUTDOWN_TIMEOUT_MS(8s) 已留 env 覆盖旋钮确保 < grace | 部署 |
 | FC 冷启动 1-3s 体感 | 前端 P0 loading 已 cover（@agent-ascyygmc）；可配 FC 预留实例（后续） | 前端/部署 |

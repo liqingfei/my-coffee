@@ -30,9 +30,9 @@ export REGION="${REGION:-cn-hangzhou}"
 # 目标 ECS（单机 standalone）
 export ECS_ID="${ECS_ID:-}"
 
-# ACR
-export ACR_REGISTRY="${ACR_REGISTRY:-registry.cn-hangzhou.aliyuncs.com}"
-export ACR_NAMESPACE="${ACR_NAMESPACE:-mycoffee}"
+# ACR（镜像走 VPC 端点 push/pull，不走公网；忘注入则 fail-loud，勿静默回落公网/错命名空间）
+export ACR_REGISTRY="${ACR_REGISTRY:?缺少 ACR_REGISTRY（ACR VPC 端点，见 lib/env.example）}"
+export ACR_NAMESPACE="${ACR_NAMESPACE:?缺少 ACR_NAMESPACE（ACR 命名空间，见 lib/env.example）}"
 export ACR_INSTANCE_ID="${ACR_INSTANCE_ID:-}"
 
 # OSS（无公网 ECS 经内网签名 URL 下载文件）

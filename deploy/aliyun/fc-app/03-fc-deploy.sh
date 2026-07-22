@@ -13,7 +13,7 @@ export PATH="/opt/node/bin:${PATH}"   # s CLI 在此路径
 
 cd "$(dirname "$0")"
 log "s deploy（s.yaml）部署/更新 FC 函数…"
-s deploy --use-remote   # 用远程 s.yaml 解析，本地无 docker 也能部署（镜像已在 ACR）
+s deploy   # 消费本地 s.yaml；首发无远端配置，--use-remote 不适用（CR zgn7xu3x 🟡3）
 
 log "部署完成。下一步：./04-healthcheck.sh"
 log "回滚：IMAGE_TAG=<旧tag/digest> ./03-fc-deploy.sh"
