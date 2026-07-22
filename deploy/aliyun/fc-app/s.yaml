@@ -2,8 +2,11 @@
 # 设计阶段模板：填入真实值后 `s deploy`。未执行，待 DESIGN.md 评审通过 + RDS 就绪。
 edition: 3.0.0
 name: my-coffee-fc
-# access 指向本地已配置的 AK（s 读环境变量 ALIBABA_CLOUD_ACCESS_KEY_*，与 lib/common.sh 同源）
-access: default
+# 鉴权=ECS 实例 RAM 角色（(a) STS，门禁⑥消除式）：留空 access 走 SDK 默认凭证链，
+# lib/common.sh 已 export ALIBABA_CLOUD_ECS_RAM=<角色名>，s 的 @alicloud/credentials 链
+# 从 ECS 元数据现取角色 STS（临时令牌、不落盘/不入 argv）。运行时 03-fc-deploy 验证生效；
+# 若链不生效则改 `s config add` 建 profile（届时频道报 action 名），不回退静态 AK。
+access: ""
 
 vars:
   region: ${env(REGION)}
