@@ -81,13 +81,18 @@ export FRONTEND_PORT="${FRONTEND_PORT:-80}"
 # ---------------------------------------------------------------------------
 META_BASE="http://100.100.100.200/latest/meta-data"
 _meta_get() {  # _meta_get <path> → 取元数据值（IMDSv1 优先，IMDSv2 兜底）
+  # 三处 curl 均 `|| true` 兜底：元数据不可达（超时/非 ECS 无路由）时 curl 退非零，
+  # set -euo pipefail 会当场杀进程 → 下游 fail-loud die() 永远到不了（CR 🟡1 真洞）。
+  # 受害者恰是没 AK、不在 ECS 的首跑开发者 = 3 秒卡死后零输出。空值/错误 body 交给
+  # 下游 die 接，这里只负责不把进程杀在探针里。
   local v
-  v="$(curl -s --max-time 3 "${META_BASE}/$1" 2>/dev/null)"
-  if [[ -z "$v" || "$v" == *404* || "$v" == *"NotFound"* || "$v" == *"Invalid"* ]]; then
+  v="$(curl -s --max-time 3 "${META_BASE}/$1" 2>/dev/null)" || true
+  # 加固模式无 token GET 返 403/Forbidden（非 404），并进 IMDSv2 fallback
+  if [[ -z "$v" || "$v" == *404* || "$v" == *403* || "$v" == *Forbidden* || "$v" == *"NotFound"* || "$v" == *"Invalid"* ]]; then
     local tok
     tok="$(curl -s -X PUT --max-time 3 "http://100.100.100.200/latest/api/token" \
-           -H 'X-aliyun-ecs-metadata-token-ttl-seconds:60' 2>/dev/null)"
-    v="$(curl -s --max-time 3 -H "X-aliyun-ecs-metadata-token: ${tok}" "${META_BASE}/$1" 2>/dev/null)"
+           -H 'X-aliyun-ecs-metadata-token-ttl-seconds:60' 2>/dev/null)" || true
+    v="$(curl -s --max-time 3 -H "X-aliyun-ecs-metadata-token: ${tok}" "${META_BASE}/$1" 2>/dev/null)" || true
   fi
   printf '%s' "$v"
 }
