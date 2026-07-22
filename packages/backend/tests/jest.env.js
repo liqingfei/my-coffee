@@ -8,6 +8,7 @@ const path = require("path");
 // - 池大小 2 钉在串尾（connection_limit=2 即测试池的全部配置，
 //   单一事实源——不再另设 TEST_CONNECTION_LIMIT env，A4 §7 / CR 处方）
 function buildTestDatabaseUrl() {
+  if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
   const envPath = path.join(os.homedir(), ".aliyun-env");
   const src = fs.readFileSync(envPath, "utf8");
   const env = {};
