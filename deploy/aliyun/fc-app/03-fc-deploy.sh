@@ -18,7 +18,8 @@
 #
 # 前置：RDS PG 就绪（~/.aliyun-env 装配 RDS_DATABASE_URL）、ACR 镜像已 push（02）、
 #        FC VPC/SG 就绪（与 RDS 同 VPC，FC 内网访 RDS:5432）。
-# maximumInstanceCount 不在 CreateFunctionInput——首轮部署后经 scaling-config 端点补设（见文末 TODO）。
+# maximumInstanceCount 不在 CreateFunctionInput——FC3.0 无 flat 字段（scaling-policy 定义），
+# 属运维策略非部署步骤，03 不设（no-op 报账，TL bmec5e8z 裁 (b)），折进 TODO v2 控制台五件批。
 set -euo pipefail
 # IMAGE_TAG 必须显式传入（02-push 的 bake tag）。common.sh 默认回退 git short sha，
 # 但 HEAD≠bake 产物（本仓 HEAD=a8e9fcd，bake 镜像=:35f9252）→ 默认静默指错 tag =
@@ -191,27 +192,17 @@ case "$(fc_route_get "$GET_BLOB"; echo $?)" in
     ;;
 esac
 
-# --- maximumInstanceCount=20（FC3.0 scaling-config 软步骤，CR 合流裁 94bqaesf）---
-# FC3.0 schema nuance：CreateFunctionInput/UpdateFunctionInput **无** maximumInstanceCount
-#   字段；maxInstances 在 PutScalingConfig 的 horizontalScalingPolicies[].ScalingPolicy 内
-#   （需 auto-scaling rule，非 flat cap）。本步 best-effort 尝试 PutScalingConfig，结果
-#   显式 surface 入通报（**不许 warn 吞**）：成功=20 当场落定；AccessDenied/NotFound/
-#   InvalidParameter=记 ❌+ErrorCode，action=fc:PutScalingConfig 折进 TODO v2 控制台四件批
-#   （@aidbs-demo 一访，与删 CreateRepository/repo ARN 收窄/OSS 整块删同批），补后重跑 03
-#   幂等单步设；不 die、不阻 04（健康探活与实例上限正交）。
-SCAL_PATH="/${FC_API_VERSION}/functions/${FC_FUNCTION_NAME}/scaling-config"
-_tmpf /tmp/fcscal-XXXX.json SBODY
-printf '%s' '{"maximumInstances":20}' > "$SBODY"   # 最自然字段名映射；服务端实际接受字段以返回 ErrorCode 为准
-SCAL_BLOB="$(fc_api PUT "$SCAL_PATH" "$SBODY" 2>&1)" || true
-rm -f "$SBODY"
-if printf '%s' "$SCAL_BLOB" | grep -q 'ErrorCode:'; then
-  SCAL_RID="$(printf '%s' "$SCAL_BLOB" | sed -n 's/.*RequestId: \([0-9A-Za-z-]*\).*/\1/p' | head -1)"
-  [ -z "$SCAL_RID" ] && SCAL_RID="<no-RequestId>"
-  log "scaling-config ❌ maximumInstanceCount=20 未落定 | ${SCAL_BLOB} | RequestId=${SCAL_RID}"
-  log "  → action=fc:PutScalingConfig 折进 TODO v2 控制台四件批（@aidbs-demo 一访），补后重跑 03 幂等单步设；不阻 04"
-else
-  log "scaling-config ✅ maximumInstanceCount=20 落定（zgn7xu3x 审定值）"
-fi
+# --- maximumInstanceCount=20：no-op 报账（TL bmec5e8z 裁 (b)：scaling 是运维策略非部署步骤，
+#   03 不背 schema 猜测）---
+# FC3.0 schema 实情（SDK @alicloud/fc20230330 实核）：CreateFunctionInput /
+#   UpdateFunctionInput / PutScalingConfigInput **均无** flat maximumInstanceCount 字段；
+#   maxInstances 只在 PutScalingConfig 的 horizontalScalingPolicies[].ScalingPolicy 内
+#   （需 auto-scaling rule：metric+target，非简单 cap）。即"20 上限"在 FC3.0 = 定义一条
+#   scaling policy，属运维策略非部署步骤——CLI 猜 schema 不稳，控制台人定更稳（TL 裁）。
+#   **折进 TODO v2 控制台五件批**（@aidbs-demo 一访：①删 cr:CreateRepository ②codematrix/*
+#   →repo ARN 收窄 ③OSS 语句整块删 ④scaling rule 人定 ⑤…），04 healthcheck 不 gate 此项
+#   （健康探活与实例上限正交）；demo 初态无实例上限风险≈0。zgn7xu3x 审定值 20 硬账不丢。
+log "maximumInstanceCount=20：FC3.0 无 flat 字段（scaling-policy 定义，需 auto-scaling rule）=运维策略非部署步骤 → 折进 TODO v2 控制台五件批（@aidbs-demo 人定）；04 不 gate；zgn7xu3x 审定值 20 硬账不丢"
 
 # --- HTTP trigger（最小权限：仅 fc:CreateTrigger；试建→已存在则跳，避免依赖 fc:GetTrigger）---
 #   CR 预宣焦点④：trigger action 核 policy——此处仅用 CreateTrigger 一个 action（GetTrigger
@@ -230,4 +221,4 @@ fi
 
 log "部署完成。下一步：./04-healthcheck.sh"
 log "回滚：IMAGE_TAG=<旧tag/digest> ./03-fc-deploy.sh（UpdateFunction 换回旧镜像，digest 固定可复现）"
-# maximumInstanceCount=20 经 scaling-config 软步骤处理（见上 log：✅ 落定 或 ❌ 折进 TODO v2 控制台）
+# maximumInstanceCount=20：no-op 报账（FC3.0 无 flat 字段，运维策略非部署步骤），折进 TODO v2 控制台五件批

@@ -35,9 +35,11 @@ resources:
       # instanceConcurrency: 10   # 部署侧连接池数学（见 DESIGN.md 第五节）：×3 ≤ RDS max_connections
       instanceConcurrency: 10
       # 最大并发实例数硬上限（CR ② 必改）：把 20 钉死为配置值，使 20×3=60≤2420（RDS max_connections 实测真值）成为定理而非假设。
-      # FC3 函数级"按量实例数上限"；部署时以 FC3 API/控制台实际字段为准（字段名可能为 maximumInstanceCount
-      # 或经控制台等价设置），关键是实例数确有 20 的硬上限。若该 prop 不被 fc3 component 直接接受，
-      # 部署后用控制台或 UpdateFunction 补设，等价效果。
+      # FC3 实情（SDK @alicloud/fc20230330 实核）：无 flat maximumInstanceCount 字段——maxInstances
+      # 在 PutScalingConfig 的 horizontalScalingPolicies[].ScalingPolicy 内（需 auto-scaling rule）。
+      # 即"20 上限"=定义一条 scaling policy，属运维策略非部署步骤。03-fc-deploy.sh 不设（no-op 报账，
+      # TL bmec5e8z 裁 (b)：CLI 猜 schema 不稳、控制台人定更稳），折进 TODO v2 控制台五件批（@aidbs-demo
+      # 人定 minInstances/maxInstances/tracking metric+target）。本值 20=zgn7xu3x 审定值，硬账不丢。
       maximumInstanceCount: 20
       # VPC 配置：与 RDS 同 VPC，FC 经内网访 RDS:5432（不走公网）
       vpcConfig:
