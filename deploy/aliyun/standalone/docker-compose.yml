@@ -1,0 +1,33 @@
+# docker-compose.yml — my-coffee 单机 standalone 编排
+# 镜像 tag 由部署脚本通过环境变量注入（BACKEND_IMAGE / FRONTEND_IMAGE）。
+# SQLite 数据落到命名卷 coffee-data，重部署不删卷、不丢数据。
+services:
+  backend:
+    image: ${BACKEND_IMAGE:?请通过部署脚本注入 BACKEND_IMAGE}
+    container_name: my-coffee-backend
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - DATABASE_URL=file:/data/dev.db
+    volumes:
+      - coffee-data:/data
+    networks:
+      - coffee-net
+
+  frontend:
+    image: ${FRONTEND_IMAGE:?请通过部署脚本注入 FRONTEND_IMAGE}
+    container_name: my-coffee-frontend
+    restart: unless-stopped
+    ports:
+      - "8080:80"   # 宿主机 8080 → nginx 80（仅内网访问；对外入口走 FC 反代）
+    depends_on:
+      - backend
+    networks:
+      - coffee-net
+
+volumes:
+  coffee-data:
+
+networks:
+  coffee-net:

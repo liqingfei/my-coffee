@@ -1,0 +1,56 @@
+# s.yaml — my-coffee FC3 部署描述（方案二：custom-container + RDS PostgreSQL + 免ICP域名）
+# 设计阶段模板：填入真实值后 `s deploy`。未执行，待 DESIGN.md 评审通过 + RDS 就绪。
+edition: 3.0.0
+name: my-coffee-fc
+# access 指向本地已配置的 AK（s 读环境变量 ALIBABA_CLOUD_ACCESS_KEY_*，与 lib/common.sh 同源）
+access: default
+
+vars:
+  region: ${env(REGION)}
+
+resources:
+  mycoffee:
+    component: fc3
+    props:
+      region: ${env(REGION)}
+      functionName: ${env(FC_FUNCTION_NAME)}
+      # custom-container：镜像走 ACR VPC 端点，FC 内网拉取
+      runtime: custom-container
+      customContainerConfig:
+        # 镜像引用：ACR VPC 端点 / 命名空间 / 仓库名 : tag
+        image: ${env(ACR_REGISTRY)}/${env(ACR_NAMESPACE)}/my-coffee-fc:${env(IMAGE_TAG)}
+        command: ["sh","-c","npx prisma migrate deploy && node fc-server.js"]
+        port: 9000
+      handler: index
+      memorySize: 512
+      timeout: 60          # 单次请求超时；FC 冷启动 + RDS 查询留余量
+      # instanceConcurrency: 10   # 部署侧连接池数学（见 DESIGN.md 第五节）：×3 ≤ RDS max_connections
+      instanceConcurrency: 10
+      # 最大并发实例数硬上限（CR ② 必改）：把 20 钉死为配置值，使 20×3=60≤2420（RDS max_connections 实测真值）成为定理而非假设。
+      # FC3 函数级"按量实例数上限"；部署时以 FC3 API/控制台实际字段为准（字段名可能为 maximumInstanceCount
+      # 或经控制台等价设置），关键是实例数确有 20 的硬上限。若该 prop 不被 fc3 component 直接接受，
+      # 部署后用控制台或 UpdateFunction 补设，等价效果。
+      maximumInstanceCount: 20
+      # VPC 配置：与 RDS 同 VPC，FC 经内网访 RDS:5432（不走公网）
+      vpcConfig:
+        vpcId: ${env(FC_VPC_ID)}
+        vSwitchIds: [${env(FC_VSWITCH_ID)}]
+        securityGroupId: ${env(FC_SG_ID)}
+      environmentVariables:
+        NODE_ENV: production
+        # RDS 内网连接串（控制台/s.yaml env 注入，不进镜像/仓库/日志）
+        # connection_limit=3 钉在 RDS_DATABASE_URL 串尾 ?connection_limit=3（A2 单一事实源，Prisma 从 URL 读）；
+        # 不另注入 CONNECTION_LIMIT env——两处定义同一事实会静默漂移（A2 已否决独立 env 读取）。
+        DATABASE_URL: ${env(RDS_DATABASE_URL)}
+        FRONTEND_DIST: /app/frontend-dist
+        PORT: "9000"
+        # 优雅关闭总预算，必须 < FC 平台 SIGTERM→SIGKILL 宽限期（见 DESIGN.md §6）
+        SHUTDOWN_TIMEOUT_MS: "8000"
+      # HTTP 触发器 + 免 ICP 域名
+      triggers:
+        - name: http
+          type: http
+          config:
+            authType: anonymous
+            methods: [GET, POST, PUT, DELETE, OPTIONS]
+            # 默认 https://<account>.<region>.fcapp.run 免 ICP；自定义域在控制台绑定
