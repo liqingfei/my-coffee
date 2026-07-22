@@ -1,12 +1,17 @@
 # s.yaml — my-coffee FC3 部署描述（方案二：custom-container + RDS PostgreSQL + 免ICP域名）
-# 设计阶段模板：填入真实值后 `s deploy`。未执行，待 DESIGN.md 评审通过 + RDS 就绪。
+# 【声明参考，非执行入口】实际部署由 deploy/aliyun/fc-app/03-fc-deploy.sh 用
+#   `aliyun fc-open` ROA 直调 FC3.0 API（版本 2023-03-30，--endpoint <acct>.<region>.fc.aliyuncs.com
+#   + --mode EcsRamRole）执行——s deploy 的 fc3 组件凭证链不支持 EcsRamRole（__provider
+#   枚举无 EcsRamRole dispatch，静态 AK 回退=铁律红线），已 pivot（CR xyw6o3wt (A)）。
+#   本文件保留作「配置事实源」声明参考：memorySize/timeout/instanceConcurrency/
+#   maximumInstanceCount/environmentVariables/vpcConfig/customContainerConfig 的审定值，
+#   03-fc-deploy.sh 消费这些值，不另造数。修改函数配置先改此文件再同步到 03。
 edition: 3.0.0
 name: my-coffee-fc
-# 鉴权=ECS 实例 RAM 角色（(a) STS，门禁⑥消除式）：留空 access 走 SDK 默认凭证链，
-# lib/common.sh 已 export ALIBABA_CLOUD_ECS_RAM=<角色名>，s 的 @alicloud/credentials 链
-# 从 ECS 元数据现取角色 STS（临时令牌、不落盘/不入 argv）。运行时 03-fc-deploy 验证生效；
-# 若链不生效则改 `s config add` 建 profile（届时频道报 action 名），不回退静态 AK。
-access: ""
+# access 字段在 pivot 后 moot（s deploy 不再执行）：执行鉴权由 03-fc-deploy.sh 的
+# `--mode EcsRamRole --ram-role-name DEMODeploy` 原生承担，令牌 CLI 内部取自元数据，
+# 不进 argv/env 文件/disk。保留 default 仅为 s.yaml 语法完整，不参与运行时。
+access: default
 
 vars:
   region: ${env(REGION)}
@@ -37,7 +42,10 @@ resources:
       # VPC 配置：与 RDS 同 VPC，FC 经内网访 RDS:5432（不走公网）
       vpcConfig:
         vpcId: ${env(FC_VPC_ID)}
-        vSwitchIds: [${env(FC_VSWITCH_ID)}]
+        # 块序列（非 flow `[...]`）：js-yaml 在 flow 上下文把 `${env(...)}` 的 `{` 当 flow-mapping 指示符
+        # → "missed comma" 解析错；块序列里 `{` 是 plain scalar 中段字符，安全。
+        vSwitchIds:
+          - ${env(FC_VSWITCH_ID)}
         securityGroupId: ${env(FC_SG_ID)}
       environmentVariables:
         NODE_ENV: production
