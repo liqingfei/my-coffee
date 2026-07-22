@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # 03-fc-deploy.sh — 部署/更新 my-coffee FC3.0 函数（方案二：custom-container + RDS PG）
 #
-# 机制：aliyun fc-open ROA 直调 FC3.0 API
+# 机制：FC3.0 API 直调（(b3')：fc_api 经 node helper fc_api.js，@alicloud/fc20230330
+#   typed 方法；aliyun CLI --body 不展开文件前缀三路实证死，详见 fc_api 注。端点/版本/鉴权结论不变）
 #   - API 版本 2023-03-30（@alicloud/fc20230330 包名即 API 版本；非 2023-08-30）
 #   - 管理域端点 <accountId>.<region>.fc.aliyuncs.com（非 *.fcapp.run 调用域）
 #   - fc-open 产品表虽标 FC2.0（2021-04-06），但 ROA 签名通用，--endpoint/--version
@@ -30,6 +31,16 @@ source "$(dirname "$0")/../lib/common.sh"
 set +u   # aliyun CLI 补全在 set -u 下引用 ZSH_VERSION（unbound）→ 放开 nounset；-e/pipefail 保留
 export PATH="/opt/node/bin:${PATH}"
 
+# (b3') fc_api.js 的 SDK 依赖就近解析：fc-app/package.json 钉 @alicloud/fc20230330@4.7.9 +
+#   @alicloud/credentials@2.4.5（package-lock.json 复现）。node_modules 缺则 npm ci；网络不通报缺
+#   退出（CLAUDE.md §一：缺失先安装或明确报缺，不绕过）。
+FC_APP_DIR="$(cd "$(dirname "$0")" && pwd)"
+export NODE_PATH="${FC_APP_DIR}/node_modules${NODE_PATH:+:${NODE_PATH}}"
+if [ ! -d "${FC_APP_DIR}/node_modules/@alicloud/fc20230330" ]; then
+  log "fc_api.js SDK 依赖未装 → npm ci（${FC_APP_DIR}）"
+  ( cd "$FC_APP_DIR" && npm ci ) || die "npm ci 失败（fc_api.js 依赖；检查网络 / package-lock）"
+fi
+
 # 🔴 tmpfile 生命周期（CR 预宣焦点，🔴级）：含 DATABASE_URL 的 body 临时文件必须
 # EXIT/INT/TERM 清，die 中途不留 /tmp 残文件=凭证落盘。trap 兜底 + 各处显式 rm 双保险。
 _CLEANUP_FILES=()
@@ -56,24 +67,26 @@ _tmpf() {
 # common.sh 默认已给：ACR_REGISTRY/ACR_NAMESPACE/ACR_INSTANCE_ID/FC_FUNCTION_NAME/REGION/IMAGE_TAG/AUTH_ARGS
 
 # FC3.0 管理域端点：<accountId>.<region>.fc.aliyuncs.com（accountId=非凭证资源 ID，见门禁⑥，可入库/可覆盖）
+#   export 给 fc_api.js 子进程读（helper 用 process.env.FC_MGMT_ENDPOINT + REGION 构造 Client）
 FC_ACCOUNT_ID="${FC_ACCOUNT_ID:-5884645900446711}"
-FC_MGMT_ENDPOINT="${FC_MGMT_ENDPOINT:-${FC_ACCOUNT_ID}.${REGION}.fc.aliyuncs.com}"
+export FC_MGMT_ENDPOINT="${FC_MGMT_ENDPOINT:-${FC_ACCOUNT_ID}.${REGION}.fc.aliyuncs.com}"
 FC_API_VERSION="2023-03-30"
 FC_IMAGE="${ACR_REGISTRY}/${ACR_NAMESPACE}/my-coffee-fc:${IMAGE_TAG}"
 
-# fc-open ROA 鉴权+端点基参（--endpoint/--version 覆盖打到 FC3.0 管理域；产品表不挡 ROA 签名）
-FC_ARGS=(--endpoint "$FC_MGMT_ENDPOINT" --version "$FC_API_VERSION" "${AUTH_ARGS[@]}")
-
-# fc_api <METHOD> <path> [body-file] —— body 走临时文件 file://（aliyun CLI v3 文件读取前缀；
-#   非 curl 的 @file——@file 被原样作 body 字符串发出，FC JSON 解析在首字符 '@' 处炸，
-#   首跑 1-6a60d405 实证。DATABASE_URL 经文件不进 argv/日志，chmod600+trap 清理）。
-#   stdout=响应，stderr 透传；退出码=aliyun 退出码（调用方按形状分流）
+# fc_api <METHOD> <path> [body-file] —— (b3') 走 node helper fc_api.js（@alicloud/fc20230330
+#   typed 方法）。aliyun CLI --body 不展开文件前缀三路实证死（@file=1-6a60d405 '@' 炸 /
+#   file://=1-6a60d615 'f' 炸 / stdin -=not support flag form -）→ DATABASE_URL 无 CLI 下发通道，
+#   改走 SDK：body 经 helper fs.readFile(BODYFILE) 程序传，never argv/never log（门禁⑥ / 最小暴露 475hrbwc）。
+#   stdout=响应体 JSON（2xx），stderr=归一化错误 blob（非 2xx，ErrorCode/Message/RequestId 硬过滤——
+#   SDK 错误对象有时回显请求体，出了请求体=门禁③格红灯）；退出码 0=2xx/非零=API 错。
+#   凭证：helper 内 Credential{type:'ecs_ram_role'} 纯 STS，不回退静态 AK（铁律①）。
+#   调用方（fc_route_get/fc_die）原样消费，形状不变。
 fc_api() {
   local method="$1" path="$2" bodyfile="${3:-}"
   if [ -n "$bodyfile" ]; then
-    aliyun fc-open "$method" "$path" "${FC_ARGS[@]}" --body "file://${bodyfile}"
+    node "${FC_APP_DIR}/fc_api.js" "$method" "$path" "$bodyfile"
   else
-    aliyun fc-open "$method" "$path" "${FC_ARGS[@]}"
+    node "${FC_APP_DIR}/fc_api.js" "$method" "$path"
   fi
 }
 
