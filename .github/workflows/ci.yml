@@ -1,0 +1,60 @@
+# Phase 1 CI（task #30；PM w6ws6ntw 裁纳入、f1r78saq 裁 lint 不进；CR 9eefja8e 四把尺）
+#
+# - static：全量类型检查 + 前端构建。消费仓库现有 script（npm run build），CI 不自造命令。
+# - test：jest on ephemeral PG service container——零 RDS 连接、零云凭证、零白名单面。
+#   注入契约（QA c436c8oe）：DATABASE_URL = 完整预编码 URL，编码责任在拼装侧；
+#   密码含 URL 特殊字符时下方 URL 须预编码（当前 ci 无需）。
+# - 凭证面：本文件零项目凭证字面值。POSTGRES_USER/PASSWORD 是一次性容器默认值
+#   （容器 ~2min 即毁，非真凭证面——QA c436c8oe 口径）。
+# - 落地路径：PM 用 API 推入 repo（GitHub 墙绕行，同前端 P0 路径）。
+# - 覆盖率 gate ≥80 由 packages/backend/jest.config.js coverageThreshold 自 enforce
+#   （lines/statements/functions 80、branches 70），CI 只跑 test:coverage，不另设机制。
+# - test job 区块按 QA 注入契约转写，QA 终稿确认/修改后为定稿（PM f1r78saq 协同口径）。
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  static:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      # backend tsc -p + frontend tsc --noEmit && vite build
+      - run: npm run build
+
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16 # 对齐 prod PG 16.13
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: mycoffee_test # db 名与本地套件 parity
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # 消费 tests/jest.env.js 守卫（DATABASE_URL 有→原样用）；connection_limit=2 与本地池 parity
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/mycoffee_test?connection_limit=2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      # globalSetup 自动 prisma migrate reset + generate 对 ephemeral PG
+      - run: npm run test:coverage

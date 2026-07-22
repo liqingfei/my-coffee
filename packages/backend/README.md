@@ -1,11 +1,11 @@
 # @my-coffee/backend
 
-希希咖啡店后端（一期 M1 点单 + M2 配送）。Express + TypeScript + Prisma(SQLite)。
+希希咖啡店后端（一期 M1 点单 + M2 配送）。Express + TypeScript + Prisma(PostgreSQL)。
 
 ## 快速开始
 
 ```bash
-cp .env.example .env          # DATABASE_URL=file:./dev.db, PORT=3001
+cp .env.example .env          # 按 .env.example 填 PG 连接串 DATABASE_URL（mycoffee_dev, connection_limit=3）、PORT=3001
 npm install                   # monorepo 根目录执行
 npm -w packages/backend run prisma:migrate   # 建库 + 应用 migration + seed 初始菜单
 npm -w packages/backend run dev              # http://localhost:3001
@@ -16,11 +16,11 @@ npm -w packages/backend run dev              # http://localhost:3001
 ## 测试
 
 ```bash
-npm -w packages/backend test              # Jest + Supertest，使用独立 test.db
+npm -w packages/backend test              # Jest + Supertest，使用独立 PG 测试库 mycoffee_test
 npm -w packages/backend run test:coverage # 覆盖率（门禁：lines ≥80%）
 ```
 
-测试库 `prisma/test.db` 与开发库 `prisma/dev.db` 隔离，每个用例自带 reset/seed，互不依赖。
+测试库 `mycoffee_test` 与开发库 `mycoffee_dev` 为相互独立的 PostgreSQL 库（测试连接串由 `tests/jest.env.js` 装配），每个用例自带 reset/seed，互不依赖。
 
 ## API 概览
 
@@ -40,7 +40,7 @@ npm -w packages/backend run test:coverage # 覆盖率（门禁：lines ≥80%）
 ## 关键设计
 
 - **金额权威计算**：`POST /api/orders` 忽略客户端传入的价格，按 DB 中 MenuItem.price × quantity 重算（四舍五入到 2 位），防篡改。
-- **状态机**：SQLite 不支持 enum，状态用 String 承载，合法流转在 `src/lib/status.ts` 集中校验，仅允许流转到下一状态，非法跳变返回 400。
+- **状态机**：状态用 String 承载、不用 DB enum（枚举流转变更走代码不走 migration），合法流转在 `src/lib/status.ts` 集中校验，仅允许流转到下一状态，非法跳变返回 400。
   - Order: `pending → confirmed → preparing → delivering → completed`
   - Delivery: `pending → picked_up → in_transit → delivered`
 - **配送继承订单**：Delivery 不冗余存储顾客地址/电话，通过 relation 继承，`POST /api/deliveries` 只需 `orderId`；同一订单重复创建返回 409（orderId 唯一）。

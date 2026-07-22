@@ -1,7 +1,8 @@
-import { Order } from "@prisma/client";
+import { Delivery, Order } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { badRequest, notFound } from "../lib/errors";
 import { ORDER_FLOW, assertTransition } from "../lib/status";
+import { serializeDelivery } from "./delivery.service";
 
 // 订单项（落库为 JSON 字符串，响应时反序列化回数组）
 export interface OrderItem {
@@ -19,8 +20,9 @@ export interface CreateOrderInput {
   customerAddress: unknown;
 }
 
-// 序列化的订单响应：items 反序列化为数组，并内嵌 delivery（如有）
-export type OrderResponse = Omit<Order, "items"> & {
+// 序列化的订单响应：items 反序列化为数组，totalPrice 读边界转 number，并内嵌 delivery（如有）
+export type OrderResponse = Omit<Order, "items" | "totalPrice"> & {
+  totalPrice: number;
   items: OrderItem[];
   delivery?: unknown;
 };
@@ -34,11 +36,41 @@ function requireNonEmptyString(value: unknown, field: string): string {
   return value.trim();
 }
 
+// 顾客字段长度上限：单一事实源 = prisma/schema.prisma 的 @db.VarChar(n)，此处手工镜像
+//（不引运行时 schema 反射、不引第三方校验库，CR 88qpqrfj 约束）。
+// PG 超长抛 `value too long` 是引擎守住不变式（永不静默截断，好）；应用层只负责把超长
+// 在 create 入口翻译成正确状态码 400，不让它落到 500 通道（CR 945yc7s7 裁决）。
+const ORDER_FIELD_MAXLEN = {
+  customerName: 100, // schema: @db.VarChar(100)
+  customerPhone: 32, // schema: @db.VarChar(32)
+  customerAddress: 255, // schema: @db.VarChar(255)
+} as const;
+
+// 长度校验 helper：抛既有 badRequest（复用 400 通道），不另建校验框架。
+// delivery create 入口仅接收 orderId、无用户字符串，故无调用点（不为假想输入建校验）；
+// 当前零跨模块 import，故不 export——哪天 delivery 真需要长度校验了再导出（CR bcsj5kjd）。
+function assertMaxLen(value: string, max: number, field: string): void {
+  if (value.length > max) {
+    throw badRequest(`${field} 超长（上限 ${max} 字符）`);
+  }
+}
+
 function serializeOrder(
   order: Order & { delivery?: unknown },
 ): OrderResponse {
+  // items 经 JSON.parse 回来已是 number（price/subtotal 在 stringify 前已转），别再转
   const items = JSON.parse(order.items) as OrderItem[];
-  return { ...order, items, delivery: order.delivery ?? null };
+  return {
+    ...order,
+    totalPrice: Number(order.totalPrice), // 读边界转换：Decimal→number
+    items,
+    // 嵌套 delivery.fee 同走读边界转换，复用 serializeDelivery（一次转换、两处出口）；
+    // delivery?: unknown 是 createOrder（无 include）与 list/get（include）两种形态的联合，
+    // 调用点结构化 cast 为 Delivery，禁改 any（CR tsc 处方）。
+    delivery: order.delivery
+      ? serializeDelivery(order.delivery as Delivery)
+      : null,
+  };
 }
 
 // 创建订单。totalPrice 由服务端按 DB 单价权威重算，忽略客户端传入的任何价格字段。
@@ -51,6 +83,9 @@ export async function createOrder(
     input.customerAddress,
     "customerAddress",
   );
+  assertMaxLen(customerName, ORDER_FIELD_MAXLEN.customerName, "customerName");
+  assertMaxLen(customerPhone, ORDER_FIELD_MAXLEN.customerPhone, "customerPhone");
+  assertMaxLen(customerAddress, ORDER_FIELD_MAXLEN.customerAddress, "customerAddress");
 
   if (!Array.isArray(input.items) || input.items.length === 0) {
     throw badRequest("订单至少包含一个商品项（items 不能为空）");
@@ -78,13 +113,15 @@ export async function createOrder(
       throw badRequest(`商品已下架，不可点：${menuItem.name}`);
     }
 
-    const subtotal = round2(menuItem.price * quantity);
+    // 读边界转换：Decimal→number，subtotal 计算与 items 价格快照共用
+    const unitPrice = Number(menuItem.price);
+    const subtotal = round2(unitPrice * quantity);
     totalPrice += subtotal;
     orderItems.push({
       menuItemId: menuItem.id,
       name: menuItem.name,
       quantity,
-      price: menuItem.price,
+      price: unitPrice,
       subtotal,
     });
   }

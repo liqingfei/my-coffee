@@ -1,25 +1,24 @@
-// 希希咖啡店 数据库 Schema（一期：M1 点单 + M2 配送）
-// provider 使用 SQLite（本地无 Docker/PostgreSQL，一期以 SQLite 替代）。
-// 注意：SQLite 的 Prisma provider 不支持 enum，状态字段用 String 承载，
-// 合法取值与流转在应用层（services）集中校验。
+// 希希咖啡店 数据库 Schema（一期：M1 点单 + M2 配送；二期方案二：FC + RDS PostgreSQL）
+// 状态字段用 String 承载，合法取值与流转在应用层（services）集中校验
+// （引擎无关决策：PG 虽支持 enum，状态机校验仍归应用层，见 A2 §1）。
 
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
 // 咖啡菜单项
 model MenuItem {
   id          Int      @id @default(autoincrement())
-  name        String
-  description String
-  price       Float // 单价（元）。一期沿用 TL 方案的 Float；金额计算在应用层四舍五入到 2 位。
-  category    String // 分类：咖啡 / 茶饮 / 甜点
-  imageUrl    String?
+  name        String   @db.VarChar(100)
+  description String   @db.VarChar(500)
+  price       Decimal  @db.Decimal(10, 2) // 单价（元）。金额 2 位精度；读边界转 number，线协议 JSON number（A2 §2）
+  category    String   @db.VarChar(50) // 分类：咖啡 / 茶饮 / 甜点
+  imageUrl    String?  @db.VarChar(500)
   available   Boolean  @default(true)
   createdAt   DateTime @default(now())
 }
@@ -27,12 +26,12 @@ model MenuItem {
 // 订单
 model Order {
   id              Int       @id @default(autoincrement())
-  items           String // JSON 字符串：[{menuItemId, name, quantity, price, subtotal}]
-  totalPrice      Float
-  status          String    @default("pending") // pending/confirmed/preparing/delivering/completed
-  customerName    String
-  customerPhone   String
-  customerAddress String
+  items           String    @db.Text // JSON 字符串：[{menuItemId, name, quantity, price, subtotal}]
+  totalPrice      Decimal   @db.Decimal(10, 2)
+  status          String    @default("pending") @db.VarChar(20) // pending/confirmed/preparing/delivering/completed
+  customerName    String    @db.VarChar(100)
+  customerPhone   String    @db.VarChar(32)
+  customerAddress String    @db.VarChar(255)
   createdAt       DateTime  @default(now())
   delivery        Delivery?
 }
@@ -42,8 +41,8 @@ model Delivery {
   id            Int      @id @default(autoincrement())
   orderId       Int      @unique
   order         Order    @relation(fields: [orderId], references: [id])
-  status        String   @default("pending") // pending/picked_up/in_transit/delivered
-  fee           Float    @default(5.0) // 一期固定配送费 5 元
+  status        String   @default("pending") @db.VarChar(20) // pending/picked_up/in_transit/delivered
+  fee           Decimal  @default(5.0) @db.Decimal(10, 2) // 一期固定配送费 5 元
   estimatedTime Int? // 预计送达时间（分钟）
   createdAt     DateTime @default(now())
 }

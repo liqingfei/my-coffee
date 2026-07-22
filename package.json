@@ -14,6 +14,7 @@
     "build:backend": "npm -w packages/backend run build",
     "build:frontend": "npm -w packages/frontend run build",
     "test": "npm -w packages/backend run test",
+    "test:coverage": "npm -w packages/backend run test:coverage",
     "lint": "npm -w packages/backend run lint"
   },
   "devDependencies": {
