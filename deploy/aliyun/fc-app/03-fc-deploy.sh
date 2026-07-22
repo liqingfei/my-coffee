@@ -112,7 +112,7 @@ build_function_config() {
   FC_IMAGE="$FC_IMAGE" FC_FUNCTION_NAME="$FC_FUNCTION_NAME" \
   ACR_INSTANCE_ID="$ACR_INSTANCE_ID" FC_VPC_ID="$FC_VPC_ID" \
   FC_VSWITCH_ID="$FC_VSWITCH_ID" FC_SG_ID="$FC_SG_ID" \
-  RDS_DATABASE_URL="$RDS_DATABASE_URL" WITH_NAME="$with_name" \
+  RDS_DATABASE_URL="$RDS_DATABASE_URL" WITH_NAME="$with_name" OUT_FILE="$out" \
   python3 -c 'import json,os
 def e(k): return os.environ[k]
 cfg={
@@ -143,7 +143,7 @@ cfg={
 if os.environ["WITH_NAME"]=="1":
     cfg["functionName"]=e("FC_FUNCTION_NAME")
 json.dump(cfg, open(os.environ["OUT_FILE"],"w"))
-' OUT_FILE="$out"
+'
   chmod 600 "$out"
 }
 
@@ -192,17 +192,9 @@ case "$(fc_route_get "$GET_BLOB"; echo $?)" in
     ;;
 esac
 
-# --- maximumInstanceCount=20：no-op 报账（TL bmec5e8z 裁 (b)：scaling 是运维策略非部署步骤，
-#   03 不背 schema 猜测）---
-# FC3.0 schema 实情（SDK @alicloud/fc20230330 实核）：CreateFunctionInput /
-#   UpdateFunctionInput / PutScalingConfigInput **均无** flat maximumInstanceCount 字段；
-#   maxInstances 只在 PutScalingConfig 的 horizontalScalingPolicies[].ScalingPolicy 内
-#   （需 auto-scaling rule：metric+target，非简单 cap）。即"20 上限"在 FC3.0 = 定义一条
-#   scaling policy，属运维策略非部署步骤——CLI 猜 schema 不稳，控制台人定更稳（TL 裁）。
-#   **折进 TODO v2 控制台五件批**（@aidbs-demo 一访：①删 cr:CreateRepository ②codematrix/*
-#   →repo ARN 收窄 ③OSS 语句整块删 ④scaling rule 人定 ⑤…），04 healthcheck 不 gate 此项
-#   （健康探活与实例上限正交）；demo 初态无实例上限风险≈0。zgn7xu3x 审定值 20 硬账不丢。
-log "maximumInstanceCount=20：FC3.0 无 flat 字段（scaling-policy 定义，需 auto-scaling rule）=运维策略非部署步骤 → 折进 TODO v2 控制台五件批（@aidbs-demo 人定）；04 不 gate；zgn7xu3x 审定值 20 硬账不丢"
+# maximumInstanceCount=20：FC3.0 schema=horizontalScalingPolicies 需 metric+target 自动伸缩规则，非 flat cap；
+# 属运维策略非部署步骤，控制台人定见 TODO v2 五件批（04/C4 不 gate；zgn7xu3x 审定值 20 硬账不丢）。
+log "maximumInstanceCount=20：FC3.0 schema=horizontalScalingPolicies 需 metric+target 自动伸缩规则，非 flat cap，控制台定义见 TODO v2（@aidbs-demo 人定）；04 不 gate；zgn7xu3x 审定值 20 硬账不丢（走通报记 ❌「未定义（FC3.0 schema 故）」）"
 
 # --- HTTP trigger（最小权限：仅 fc:CreateTrigger；试建→已存在则跳，避免依赖 fc:GetTrigger）---
 #   CR 预宣焦点④：trigger action 核 policy——此处仅用 CreateTrigger 一个 action（GetTrigger
