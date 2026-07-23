@@ -5,8 +5,11 @@
 //   必须先关 HTTP 再断 DB，否则 drain 中的请求会拿到已断开的 DB 连接。
 // 设计阶段模板，未执行；待 DESIGN.md 评审通过 + RDS 就绪后随镜像 bake 生效。
 const path = require("path");
-const { createApp } = require("./dist/app");
-const { prisma } = require("./dist/lib/prisma");
+// backend tsconfig rootDir="." + include=[src,prisma,tests] → tsc 保相对路径，输出 dist/src/...
+// （非扁平 dist/app；rootDir=. 对多目录 include 是正确的，shim 须匹配实际输出结构）。
+// 04 healthcheck 实证此路径（前版 ./dist/app → Cannot find module './dist/app'，2026-07-23）。
+const { createApp } = require("./dist/src/app");
+const { prisma } = require("./dist/src/lib/prisma");
 
 const FRONTEND_DIST = process.env.FRONTEND_DIST || path.join(__dirname, "../../frontend-dist");
 const PORT = Number(process.env.CAPort || process.env.PORT || 9000);
