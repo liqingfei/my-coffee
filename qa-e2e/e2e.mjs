@@ -261,7 +261,7 @@ console.log("订单列表页 #3 渲染/导航/下单置顶/创建配送/查看�
   await page.waitForURL(/\/orders$/);
   await page.waitForSelector("table tbody tr");
   const firstRow = (await page.locator("table tbody tr").first().textContent()).replace(/\s+/g, " ");
-  check("#3 新订单置顶(第一行)", firstRow.includes(newOrderId), `(row=${firstRow.slice(0, 60)})`);
+  check("#3 新订单置顶(第一行)", firstRow.includes("#" + newOrderId), `(row=${firstRow.slice(0, 60)})`);
   check("#3 行状态=待确认", firstRow.includes("待确认"));
   check("#3 金额渲染 ¥xx.xx 无 NaN", /¥\d+\.\d{2}/.test(firstRow) && !/NaN/.test(firstRow));
   // 深链刷新
@@ -309,21 +309,24 @@ console.log("订单列表 状态筛选/空态 #3");
   await page.waitForSelector("h1");
   const allRows = await page.locator("table tbody tr").count();
 
+  // 注意：空态时 OrderListPage 仍渲染 1 个 <tr><td colSpan>暂无订单</td></tr>，
+  // 故不能用 tr.count()===0 判空；用"暂无订单"文案是否出现来区分空态 vs 有数据。
   const statuses = ["待确认", "已确认", "制作中", "配送中", "已完成"];
   for (const label of statuses) {
     await page.locator(".chip", { hasText: label }).first().click();
     await page.waitForTimeout(200);
-    const visible = await page.locator("table tbody tr").count();
-    if (visible > 0) {
+    const isEmpty = (await page.locator("text=暂无订单").count()) > 0;
+    if (!isEmpty) {
       const texts = (await page.locator("table tbody tr").allInnerTexts()).join(" ");
       check(`#3 筛选=${label} 可见行均含该状态`, texts.includes(label));
     } else {
-      check(`#3 筛选=${label} 无匹配->空态`, (await page.locator("text=暂无订单").count()) > 0);
+      check(`#3 筛选=${label} 无匹配->空态`, true);
     }
     await page.locator(".chip", { hasText: "全部" }).first().click();
     await page.waitForTimeout(200);
   }
-  check("#3 切回全部 行数恢复", (await page.locator("table tbody tr").count()) === allRows, `(all=${allRows})`);
+  check("#3 切回全部 非空且行数恢复", (await page.locator("text=暂无订单").count()) === 0 &&
+    (await page.locator("table tbody tr").count()) === allRows, `(all=${allRows})`);
   await ctx.close();
 }
 
