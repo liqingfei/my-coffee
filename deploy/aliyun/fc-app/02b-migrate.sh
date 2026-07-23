@@ -1,15 +1,8 @@
 #!/usr/bin/env bash
-# 02b-migrate.sh — RDS PostgreSQL schema migrate（fail-first 独立部署步骤）
-#
-# 缘起（CR aohix7ut + TL ebwcq4mj/cd9be9qo 设计裁）：prisma migrate deploy 从 FC 冷启
-#   路径移出 → 独立 ECS 步骤。根因（ls 实证 @prisma/engines + .prisma/client）：query engine
-#   本已焙（build `npx prisma generate`+runtime COPY node_modules，.prisma/client dlopen 位），
-#   schema engine 亦已焙（@prisma/engines postinstall 焙 `schema-engine-linux-musl` executable）。
-#   FC 受限沙箱扰动平台探测 → CLI 误下载 openssl-1.1.x 变体（非用已焙 musl 品）→ musl 根文件系统
-#   加载该变体失败 → garbage 输出→parse error+EPERM。移出 migrate 后 FC 零 schema engine 需求
-#   （FC 只 `node fc-server.js` 走 query dlopen 路，零 download/execve）；migrate 走本脚本
-#   （ECS podman 无沙箱扰动→探测正确返回 linux-musl→CLI 用已焙 schema-engine-linux-musl，零下载）。
-#   C4「并发冷启 migrate 不死锁」验收项整类消灭（特殊情况本身消除非修复）。
+# 02b-migrate.sh — migrate 移出 FC 冷启后的独立 fail-first 步骤：schema 先于 code，
+# migrate 败即 abort，函数永不接「期待新 schema 的码」。
+# 根因沿革（build 期 Prisma engine 变体探测失输→重焙 linux-musl-openssl-3.0.x、migrate
+# 移出冷启）单一权威源 = DESIGN.md §七 canonical drift 注，本脚本不复述以免双源漂移。
 #
 # 机制：podman run --rm -e DATABASE_URL <local-image> npx prisma migrate deploy
 #   - 镜像本地（01 已 build :IMAGE_TAG）→ 零 ACR pull / 零新 RAM action（RAM-neutral，
@@ -37,9 +30,12 @@
 # 前置：01-build-images.sh 已 build 本地镜像（:IMAGE_TAG）+ ~/.aliyun-env 装配 RDS_DATABASE_URL。
 #   本脚本不 pull（镜像须本地；pull 走 02，ACR auth 非本步骤职责）。
 set -euo pipefail
+# IMAGE_TAG 必须显式传入（与 03 同款 fail-loud）：common.sh 默认回退 git short sha 会掩盖
+# 缺省 → source 前先钉，勿让 git-sha 默认指错 tag（CR 🟡1 fold，guard-liveness：死守卫比
+# 没守卫糟——声称给不出的保护）。空 IMAGE_TAG 在此真 die，不进 common.sh 默认路径。
+: "${IMAGE_TAG:?缺少 IMAGE_TAG（与 01/02/03 同 tag，本地镜像须在场）}"
 source "$(dirname "$0")/../lib/common.sh"
 
-: "${IMAGE_TAG:?缺少 IMAGE_TAG（与 01/02/03 同 tag，本地镜像须在场）}"
 : "${RDS_DATABASE_URL:?缺少 RDS_DATABASE_URL（仓库外 ~/.aliyun-env 注入 RDS 内网连接串）}"
 
 FC_IMAGE="${ACR_REGISTRY}/${ACR_NAMESPACE}/my-coffee-fc:${IMAGE_TAG}"
@@ -57,7 +53,7 @@ log "DATABASE_URL：键名=DATABASE_URL 值长=${#RDS_DATABASE_URL}（值不进�
 export DATABASE_URL="${RDS_DATABASE_URL}"
 
 # podman run：--rm 退即清；-e DATABASE_URL 仅键名（值从父 env 拷贝）；sh -c 覆盖镜像 CMD；
-#   timeout 300 兜底（migrate 应秒级，schema engine 首次下载+加载数秒；挂死有上限）。
+#   timeout 300 兜底（migrate 应秒级，schema engine 已焙零运行时下载，加载本身数秒；挂死有上限）。
 #   输出捕到 MIGRATE_OUT（不直吐 stdout=可过滤状态行，免 prisma 进度条噪音+保护值不泄露）。
 MIGRATE_OUT=""
 if ! MIGRATE_OUT="$(timeout 300 docker run --rm \
