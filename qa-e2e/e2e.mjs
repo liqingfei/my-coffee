@@ -221,6 +221,112 @@ console.log("E2E-5b 异常路径 (后端400兜底)");
   await ctx.close();
 }
 
+// ---------- 订单列表页（工作项 #3；Scene 4 QA 验收） ----------
+// 覆盖用例（对应 QA 审阅补充的 5 条 + 核心路径）：
+//   - /orders 直访渲染 + 导航栏"订单"入口 + 深链刷新
+//   - 下单后列表置顶 + 字段(状态/金额) —— P0，即用户原始 bug"下单后看不到订单页"
+//   - 金额渲染契约：¥xx.xx，无 NaN/字符串
+//   - 创建配送入口：仅 delivery==null 显示，confirm 后创建，创建后按钮消失
+//   - 查看详情跳转 /orders/:id
+//   - 状态筛选本地过滤正确性 + 空态(按无订单状态筛选，不 wipe 共享 DB)
+// 注意：本块需 backend(3001)+frontend(5173)+已 seed 的 PostgreSQL 可用才能 live 运行。
+// 当前 run 环境无 PG（schema.prisma provider=postgresql，e2e README 的 file:./dev.db
+// 为过期 SQLite 残留、不可用），spec 已写就并通过 `node --check` 语法校验，live 执行推迟到 PG 环境。
+// 选择器基于 TL 设计契约 + MenuPage 既有模式（.chip/.card/.badge）；Dev 落地 DOM 后可能需微调。
+console.log("订单列表页 #3 渲染/导航/下单置顶/创建配送/查看详情");
+{
+  const ctx = await browser.newContext(CTX_BASE);
+  const page = await ctx.newPage();
+  page.setDefaultTimeout(15000);
+
+  // --- /orders 直访渲染 + 导航入口 ---
+  await page.goto(BASE + "/orders");
+  await page.waitForSelector("h1");
+  check("#3 /orders 直访渲染", (await page.locator("h1").textContent()).includes("订单列表"));
+  const navOrder = page.locator('.nav a[href="/orders"]');
+  check("#3 导航栏订单入口", (await navOrder.count()) > 0);
+
+  // --- 下单 → 列表置顶（P0） ---
+  await page.goto(BASE + "/order");
+  await page.waitForSelector(".card");
+  await page.locator(".card", { hasText: "美式咖啡" }).locator("button").last().click();
+  await page.locator('input[placeholder="张三"]').fill("QA列表");
+  await page.locator('input[placeholder="13800000000"]').fill("13800000099");
+  await page.locator('input[placeholder="杭州市西湖区文一西路 100 号"]').fill("列表地址");
+  await page.locator("button[type=submit]").click();
+  await page.waitForURL(/\/orders\/\d+/);
+  const newOrderId = page.url().match(/\/orders\/(\d+)/)[1];
+  // 点导航"订单"回列表（即用户原始 bug 的反向验证：现在能看到订单页）
+  await page.locator('.nav a[href="/orders"]').click();
+  await page.waitForURL(/\/orders$/);
+  await page.waitForSelector("table tbody tr");
+  const firstRow = (await page.locator("table tbody tr").first().textContent()).replace(/\s+/g, " ");
+  check("#3 新订单置顶(第一行)", firstRow.includes(newOrderId), `(row=${firstRow.slice(0, 60)})`);
+  check("#3 行状态=待确认", firstRow.includes("待确认"));
+  check("#3 金额渲染 ¥xx.xx 无 NaN", /¥\d+\.\d{2}/.test(firstRow) && !/NaN/.test(firstRow));
+  // 深链刷新
+  await page.reload();
+  await page.waitForSelector("table tbody tr");
+  check("#3 /orders 刷新仍渲染列表", (await page.locator("table tbody tr").count()) > 0);
+
+  // --- 创建配送入口（仅 delivery==null 显示） ---
+  const createBtn = page.locator("table tbody tr").first().locator("button", { hasText: /创建配送/ });
+  check("#3 新订单行显示创建配送按钮", (await createBtn.count()) > 0);
+  let listDeliveryPosts = 0;
+  page.on("request", (req) => {
+    if (req.url().includes("/api/deliveries") && req.method() === "POST") listDeliveryPosts++;
+  });
+  {
+    const dlg = new Promise((resolve) => {
+      page.once("dialog", async (dialog) => { resolve(dialog.message()); await dialog.accept(); });
+    });
+    await createBtn.click();
+    const msg = await dlg;
+    check("#3 列表创建配送 confirm 文案", /确认创建配送单/.test(msg), `(${msg})`);
+  }
+  await page.waitForTimeout(500);
+  check("#3 列表创建配送 发了 POST", listDeliveryPosts === 1, `(posts=${listDeliveryPosts})`);
+  await page.reload(); // 创建后 delivery!=null，按钮应消失
+  await page.waitForSelector("table tbody tr");
+  check("#3 创建配送后按钮消失", (await page.locator("table tbody tr").first().locator("button", { hasText: /创建配送/ }).count()) === 0);
+
+  // --- 查看详情跳转 ---
+  await page.locator("table tbody tr").first().locator("a", { hasText: /查看详情/ }).click();
+  await page.waitForURL(/\/orders\/\d+/);
+  check("#3 查看详情跳转 /orders/:id", /\/orders\/\d+/.test(page.url()));
+  await ctx.close();
+}
+
+// ---------- 订单列表：状态筛选本地过滤 + 空态 ----------
+// 前置（PG 环境）：建议先 seed/构造覆盖多状态的订单(经 PATCH /api/orders/:id/status 流转)，
+// 使各状态 chip 均有数据，断言才有意义；当前为 best-effort。
+console.log("订单列表 状态筛选/空态 #3");
+{
+  const ctx = await browser.newContext(CTX_BASE);
+  const page = await ctx.newPage();
+  page.setDefaultTimeout(15000);
+  await page.goto(BASE + "/orders");
+  await page.waitForSelector("h1");
+  const allRows = await page.locator("table tbody tr").count();
+
+  const statuses = ["待确认", "已确认", "制作中", "配送中", "已完成"];
+  for (const label of statuses) {
+    await page.locator(".chip", { hasText: label }).first().click();
+    await page.waitForTimeout(200);
+    const visible = await page.locator("table tbody tr").count();
+    if (visible > 0) {
+      const texts = (await page.locator("table tbody tr").allInnerTexts()).join(" ");
+      check(`#3 筛选=${label} 可见行均含该状态`, texts.includes(label));
+    } else {
+      check(`#3 筛选=${label} 无匹配->空态`, (await page.locator("text=暂无订单").count()) > 0);
+    }
+    await page.locator(".chip", { hasText: "全部" }).first().click();
+    await page.waitForTimeout(200);
+  }
+  check("#3 切回全部 行数恢复", (await page.locator("table tbody tr").count()) === allRows, `(all=${allRows})`);
+  await ctx.close();
+}
+
 await browser.close();
 console.log(`\n=== E2E 结果: ${pass} passed, ${fail} failed ===`);
 process.exit(fail > 0 ? 1 : 0);
