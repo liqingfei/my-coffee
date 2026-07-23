@@ -60,19 +60,21 @@ function emitError(e) {
     credential: new Credential({ type: 'ecs_ram_role' }),
   });
 
-  // PATH 分派：/2023-03-30/functions[/{name}[/triggers]]
-  //   ['', '2023-03-30', 'functions', name?, sub?]
+  // PATH 分派：/2023-03-30/{functions|custom-domains}[/{name}[/triggers]]
+  //   ['', '2023-03-30', seg, name?, sub?]
+  //   functions:       GET/{name}=getFunction, POST=createFunction, PUT/{name}=updateFunction, POST/{name}/triggers=createTrigger
+  //   custom-domains:  GET/{name}=getCustomDomain（无 request 参）, POST=createCustomDomain, PUT/{name}=updateCustomDomain
   const parts = PATH.split('/');
   const ver = parts[1];
   const seg = parts[2];
-  const fnName = parts[3];
+  const name = parts[3];   // function name 或 custom domain name
   const sub = parts[4];
-  if (seg !== 'functions') {
-    process.stderr.write(`fc_api.js: 不支持的 PATH（仅 /functions 系）：${PATH}\n`);
+  if (seg !== 'functions' && seg !== 'custom-domains') {
+    process.stderr.write(`fc_api.js: 不支持的 PATH（仅 /functions 或 /custom-domains 系）：${PATH}\n`);
     process.exit(2);
   }
 
-  // body：经 fs.readFile 程序传，never argv（DATABASE_URL 不进 ps 可观测面）
+  // body：经 fs.readFile 程序传，never argv（DATABASE_URL / certConfig.privateKey 不进 ps 可观测面，门禁⑥）
   let body = null;
   if (BODYFILE) {
     try {
@@ -82,25 +84,43 @@ function emitError(e) {
 
   let resp;
   try {
-    if (METHOD === 'GET' && fnName && !sub) {
-      resp = await client.getFunction(fnName, new m.GetFunctionRequest({}));
-    } else if (METHOD === 'POST' && !fnName) {
-      resp = await client.createFunction(new m.CreateFunctionRequest({ body }));
-    } else if (METHOD === 'PUT' && fnName && !sub) {
-      resp = await client.updateFunction(fnName, new m.UpdateFunctionRequest({ body }));
-    } else if (METHOD === 'POST' && fnName && sub === 'triggers') {
-      resp = await client.createTrigger(fnName, new m.CreateTriggerRequest({ body }));
-    } else {
-      process.stderr.write(`fc_api.js: 无 typed 映射：METHOD=${METHOD} PATH=${PATH}\n`);
-      process.exit(2);
+    if (seg === 'functions') {
+      if (METHOD === 'GET' && name && !sub) {
+        resp = await client.getFunction(name, new m.GetFunctionRequest({}));
+      } else if (METHOD === 'POST' && !name) {
+        resp = await client.createFunction(new m.CreateFunctionRequest({ body }));
+      } else if (METHOD === 'PUT' && name && !sub) {
+        resp = await client.updateFunction(name, new m.UpdateFunctionRequest({ body }));
+      } else if (METHOD === 'POST' && name && sub === 'triggers') {
+        resp = await client.createTrigger(name, new m.CreateTriggerRequest({ body }));
+      } else {
+        process.stderr.write(`fc_api.js: 无 typed 映射：METHOD=${METHOD} PATH=${PATH}\n`);
+        process.exit(2);
+      }
+    } else {  // custom-domains
+      if (METHOD === 'GET' && name && !sub) {
+        resp = await client.getCustomDomain(name);   // SDK 签名 getCustomDomain(domainName)，无 request 参
+      } else if (METHOD === 'POST' && !name) {
+        resp = await client.createCustomDomain(new m.CreateCustomDomainRequest({ body }));
+      } else if (METHOD === 'PUT' && name && !sub) {
+        resp = await client.updateCustomDomain(name, new m.UpdateCustomDomainRequest({ body }));
+      } else {
+        process.stderr.write(`fc_api.js: 无 typed 映射：METHOD=${METHOD} PATH=${PATH}\n`);
+        process.exit(2);
+      }
     }
   } catch (e) {
     emitError(e);
     return;
   }
 
-  // 成功：响应体 JSON → stdout（fc_route_get/trigger grep 消费；trigger 路需 '"triggerName"'）
+  // 成功：响应体 JSON → stdout（functions: fc_route_get/trigger grep 消费；trigger 路需 '"triggerName"'）。
+  // custom-domains: ④c —— createCustomDomain/getCustomDomain 响应可能含 certConfig（FC 通常 privateKey
+  // write-only 不回显，但防御性剥离防落 03/05 日志/argv，门禁⑥ 同 DATABASE_URL 口径；certName 保留供 05 grep 确认）。
   const out = (resp && resp.body) ? resp.body : {};
+  if (seg === 'custom-domains' && out.certConfig) {
+    out.certConfig = { certName: (out.certConfig.certName || '<redacted>') };
+  }
   process.stdout.write(JSON.stringify(out));
   process.exit(0);
 })();

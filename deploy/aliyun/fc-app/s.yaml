@@ -67,3 +67,18 @@ resources:
             authType: anonymous
             methods: [GET, POST, PUT, DELETE, OPTIONS]
             # 默认 https://<account>.<region>.fcapp.run 免 ICP；自定义域在控制台绑定
+      # 自定义域（devsapp.net，Aliyun 拥有域，免 ICP）——【声明参考，非 s 执行入口】
+      #   实际绑定由 deploy/aliyun/fc-app/05-bind-domain.sh 用 fc_api.js 的 /custom-domains
+      #   分派（createCustomDomain typed 方法，EcsRamRole 鉴权）执行。本块是「配置事实源」
+      #   声明：protocol/routeConfig 的审定值，05 消费不另造数。
+      #   protocol=HTTPS（CR/QA 安全门禁：PII 入口禁 HTTP 明文 CWE-319；HTTP,HTTPS 的 HTTP
+      #   分支会以明文回 PII=红灯，故 HTTPS-only）。首轮无 certConfig 试 auto-provision
+      #   （devsapp.net=Aliyun 域，FC 可能自动签 *.fc.devsapp.net）；cert required 则转
+      #   aliyun SSL 免费证书 PEM 路径（门禁⑥ 同 DATABASE_URL 口径，CR ⑤）。
+      customDomains:
+        - domainName: ${env(FC_FUNCTION_NAME)}.fcv3.5884645900446711.${env(REGION)}.fc.devsapp.net
+          protocol: HTTPS
+          routeConfig:
+            routes:
+              - functionName: ${env(FC_FUNCTION_NAME)}
+                path: /*
