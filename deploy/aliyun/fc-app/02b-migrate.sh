@@ -10,12 +10,13 @@
 #   - DATABASE_URL 经 `-e DATABASE_URL`（**仅键名无 `=`值**）从父 env 拷贝→值不入 podman argv
 #     （ps 面最小暴露，门禁⑥ / 最小暴露 475hrbwc）；父 env 由 export 注入（非 argv）
 #   - 命令 `npx prisma migrate deploy` 替换镜像 CMD（Dockerfile.fc CMD exec-form
-#     `["sh","-c","migrate && node fc-server.js"]`，run args 替换 CMD 不论 form），经 node 基镜
+#     `["node","fc-server.js"]`，run args 替换 CMD 不论 form），经 node 基镜
 #     ENTRYPOINT docker-entrypoint.sh `exec "$@"` 落 migrate-only（不起 server）。ls 实证此路通
 #     （docker run <img> ls -l … 已返输出=command-replacement via entrypoint exec 生效）
-#   - schema engine：ECS podman 无沙箱扰动→平台探测正确返回 linux-musl→CLI 用已焙
-#     `schema-engine-linux-musl`（零下载；FC 沙箱探测被扰误下 openssl-1.1.x 变体=FC EPERM
-#     根因，ECS 无此路）；query engine 已焙 .prisma/client（PrismaClient dlopen，零 download/execve）
+#   - schema engine：变体经 ENV 钉（PRISMA_CLI_BINARY_TARGETS=linux-musl-openssl-3.0.x，
+#     binariesExist 读 env 找已焙 `schema-engine-linux-musl-openssl-3.0.x`，零回退探测；
+#     根因沿革见上 §七 指针，本脚本不复述以免双源漂移）；query engine 已焙 .prisma/client
+#     （PrismaClient dlopen，零 download/execve）
 #
 # 验收线（CR aohix7ut 钉死，逐条对账）：
 #   - fail-first：部署序 01→02→02b(migrate)→03→04，03 UpdateFunction 换镜像**之前**跑
