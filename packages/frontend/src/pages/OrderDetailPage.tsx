@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 import { api } from "../api";
+import { useCreateDelivery } from "../hooks/useCreateDelivery";
 import type { Order } from "../types";
 import { ORDER_STATUS_LABEL } from "../types";
 
@@ -9,8 +10,7 @@ export function OrderDetailPage() {
   const { id } = useParams();
   const location = useLocation();
   const [order, setOrder] = useState<Order | null>(null);
-  const [error, setError] = useState("");
-  const [creating, setCreating] = useState(false);
+  const [loadError, setLoadError] = useState("");
   // P0-3：下单成功跳转过来时显示成功 banner（直接访问 URL 不显示）
   const [showSuccess, setShowSuccess] = useState(
     Boolean((location.state as { fromSubmit?: boolean } | null)?.fromSubmit)
@@ -20,27 +20,16 @@ export function OrderDetailPage() {
     api
       .getOrder(id!)
       .then(setOrder)
-      .catch((e) => setError((e as Error).message));
+      .catch((e) => setLoadError((e as Error).message));
   }, [id]);
 
   useEffect(load, [load]);
 
-  const createDelivery = async () => {
-    if (!order || creating) return;
-    // P0-1：涉及 ¥5 费用，创建前二次确认（取消则不发请求）
-    if (!window.confirm("确认创建配送单？配送费 ¥5.00。")) return;
-    setCreating(true);
-    setError("");
-    try {
-      await api.createDelivery(order.id);
-      load();
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setCreating(false);
-    }
-  };
+  // P0-1：涉及 ¥5 费用，创建前二次确认（取消则不发请求）——复用共享 hook，与 OrderListPage 同源
+  const { createDelivery, creating, error: deliveryError } =
+    useCreateDelivery(load);
 
+  const error = loadError || deliveryError;
   if (error) return <p className="error">{error}</p>;
   if (!order) return <p>加载中…</p>;
 
@@ -107,7 +96,11 @@ export function OrderDetailPage() {
           </Link>
         </p>
       ) : (
-        <button className="btn" onClick={createDelivery} disabled={creating}>
+        <button
+          className="btn"
+          onClick={() => createDelivery(order.id)}
+          disabled={creating}
+        >
           {creating ? "创建中…" : "创建配送单（¥5.00）"}
         </button>
       )}

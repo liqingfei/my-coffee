@@ -26,6 +26,11 @@ export const api = {
 
   getOrder: (id: string | number) => http<Order>(`/api/orders/${id}`),
 
+  listOrders: (status?: string) =>
+    http<Order[]>(
+      `/api/orders${status ? `?status=${encodeURIComponent(status)}` : ""}`,
+    ),
+
   createDelivery: (orderId: number) =>
     http<Delivery>("/api/deliveries", { method: "POST", body: JSON.stringify({ orderId }) }),
 

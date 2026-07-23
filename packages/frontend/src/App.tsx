@@ -1,6 +1,7 @@
 import { NavLink, Route, Routes } from "react-router-dom";
 import { MenuPage } from "./pages/MenuPage";
 import { OrderPage } from "./pages/OrderPage";
+import { OrderListPage } from "./pages/OrderListPage";
 import { OrderDetailPage } from "./pages/OrderDetailPage";
 import { DeliveryPage } from "./pages/DeliveryPage";
 
@@ -15,6 +16,7 @@ export default function App() {
               菜单
             </NavLink>
             <NavLink to="/order">下单</NavLink>
+            <NavLink to="/orders">订单</NavLink>
           </nav>
         </div>
       </header>
@@ -22,6 +24,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<MenuPage />} />
           <Route path="/order" element={<OrderPage />} />
+          <Route path="/orders" element={<OrderListPage />} />
           <Route path="/orders/:id" element={<OrderDetailPage />} />
           <Route path="/delivery/:id" element={<DeliveryPage />} />
           <Route path="*" element={<p>页面不存在</p>} />
