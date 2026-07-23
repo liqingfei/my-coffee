@@ -42,19 +42,24 @@ COPY deploy/aliyun/fc-app/fc-server.js ./packages/backend/fc-server.js
 WORKDIR /app/packages/backend
 ENV FRONTEND_DIST=/app/frontend-dist \
     PORT=9000
-# Dev e13zdrmu 源码级两落地缺口（runtime 段必补，缺一即炸；build 段 ENV 不继承至 runtime 段）：
-#  ① PRISMA_CLI_BINARY_TARGETS 重申：02b migrate 跑在 runtime 段镜像 → schema engine 解析经
-#     binariesExist() 读此 env 找已焙 openssl-3 品（零回退探测）；不重申则 get-platform 探测
-#     （runtime alpine 无 openssl CLI）找 schema-engine-linux-musl（缺席）→ 按需重下 1.1.x 变体再炸。
-#  ② PRISMA_QUERY_ENGINE_LIBRARY 钉 query engine loader（@prisma/client library.js env 钉优先
-#     于运行时探测）；不钉则探测落 linux-musl（1.1.x 味）→ 加载 native 焙的坏 .so.node → 04 必炸。
-#     Dev t6ekqku4 源码实证（@prisma/client 5.22.0 runtime/library.js 全读）：loader env 置则原样当
-#     **加载路径**返回（无 binaryTarget 名→路径解析）→ **用全路径非名**（CR 9qtkhcse「优先用名」
-#     名不行→退全路径，条件分支命中）。路径错=dlopen hard error 直接报路径（loud 非静默回退，④ 探针
-#     挂=路径面第一手可见，非哑雷）。落点结构确认（Dev 交叉实证#1：generate .prisma 落 root
-#     node_modules + L32 COPY --from=build /app/node_modules 整体带过→路径确定）；bake 后 ls(⓪) belt-and-suspenders。
+# runtime 段 ENV 钉（build 段 ENV 不继承至 runtime 段，缺一即炸；Dev e13zdrmu/t6ekqku4 源码 + 02b 实证）：
+#  #3 PRISMA_CLI_BINARY_TARGETS 重申 = build #1 的 runtime 侧镜像一致性锚点（generate 期消费面，
+#     非 migrate 期——02b 实证：migrate 路 schema-engine resolver 走 #5 不读 #3；#3 是 generate 期
+#     binariesExist 下载面变量，runtime 段无 generate 故实际 no-op，留作 belt 一致性锚点 TL 96pwd1oz 裁不删）。
+#  #4 PRISMA_QUERY_ENGINE_LIBRARY 钉 query engine loader（@prisma/client library.js）=全路径非名
+#     （Dev t6ekqku4 源码：loader za() env 置则原样当加载路径返回，零 binaryTarget 名→路径解析；
+#     CR 9qtkhcse「优先用名」被证伪，全路径=正退路）。路径错=x64 dlopen loud error 非静默（④ 探针第一手可见）。
+#     不钉则探测落 linux-musl（1.1.x 味）→ 04 必炸。落点：generate .prisma 落 root node_modules + L37
+#     COPY --from=build /app/node_modules 整体带过→路径确定（bake 后 ls(⓪) belt 实证在场）。
+#  #5 PRISMA_SCHEMA_ENGINE_BINARY 钉 schema engine（02b migrate 路）=全路径。Dev 5ws6rrho 源码实证
+#     （prisma 5.22.0 build/index.js）：env-var map schema-engine→PRISMA_SCHEMA_ENGINE_BINARY（平行
+#     query-engine→PRISMA_QUERY_ENGINE_LIBRARY=#4），resolver df()/wu() 读 env 置则 path.resolve 原样当
+#     路径返回、零 probe（同 #4 机制族）。不钉则 get-platform probe（alpine 无 openssl CLI）→ default
+#     openssl-1.1.x → 搜裸名 schema-engine-linux-musl 不在 → 02b abort（实证）。#5 落=双 engine 皆 env
+#     路径钉零 probe，(c)「绕过探测组件」对两面统一成立。运行时 A/B 双锁（Dev 5ws6rrho）。
 ENV PRISMA_CLI_BINARY_TARGETS=linux-musl-openssl-3.0.x \
-    PRISMA_QUERY_ENGINE_LIBRARY=/app/node_modules/.prisma/client/libquery_engine-linux-musl-openssl-3.0.x.so.node
+    PRISMA_QUERY_ENGINE_LIBRARY=/app/node_modules/.prisma/client/libquery_engine-linux-musl-openssl-3.0.x.so.node \
+    PRISMA_SCHEMA_ENGINE_BINARY=/app/node_modules/@prisma/engines/schema-engine-linux-musl-openssl-3.0.x
 EXPOSE 9000
 # 无状态服务（migrate 走 02b-migrate.sh 独立 fail-first 步骤，不在冷启；CR ga7zzjob 一致性扫
 # 消 Dockerfile CMD × FC config command 双源——镜像 CMD 与 03 customContainerConfig.command 同款）。

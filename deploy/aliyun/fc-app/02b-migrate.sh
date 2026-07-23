@@ -13,10 +13,14 @@
 #     `["node","fc-server.js"]`，run args 替换 CMD 不论 form），经 node 基镜
 #     ENTRYPOINT docker-entrypoint.sh `exec "$@"` 落 migrate-only（不起 server）。ls 实证此路通
 #     （docker run <img> ls -l … 已返输出=command-replacement via entrypoint exec 生效）
-#   - schema engine：变体经 ENV 钉（PRISMA_CLI_BINARY_TARGETS=linux-musl-openssl-3.0.x，
-#     binariesExist 读 env 找已焙 `schema-engine-linux-musl-openssl-3.0.x`，零回退探测；
-#     根因沿革见上 §七 指针，本脚本不复述以免双源漂移）；query engine 已焙 .prisma/client
-#     （PrismaClient dlopen，零 download/execve）
+#   - schema engine：migrate 路有等价全路径 env 钉 **#5 PRISMA_SCHEMA_ENGINE_BINARY**（与 query
+#     engine 路 #4 PRISMA_QUERY_ENGINE_LIBRARY 同机制族——Dev 5ws6rrho 源码实证：env-var map
+#     schema-engine→PRISMA_SCHEMA_ENGINE_BINARY，resolver df()/wu() 读 env 置则 path.resolve 原样当
+#     路径返回，零 probe）。alpine runtime 缺 openssl CLI → 不钉 #5 则 get-platform probe default
+#     openssl-1.1.x → 搜裸名 schema-engine-linux-musl 不在 → abort（02b 前序实证，已由 #5 解）。
+#     双 engine 皆 env 路径钉零 probe（QE za()#4 / SE wu-df#5），(c)「绕过探测」对两面统一成立。
+#     根因沿革见上 §七 指针，本脚本不复述以免双源漂移；query engine 已焙 .prisma/client（#4 全路径
+#     env 钉 loader，零探测，dlopen 直载）
 #
 # 验收线（CR aohix7ut 钉死，逐条对账）：
 #   - fail-first：部署序 01→02→02b(migrate)→03→04，03 UpdateFunction 换镜像**之前**跑
