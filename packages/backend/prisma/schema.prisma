@@ -3,7 +3,11 @@
 // （引擎无关决策：PG 虽支持 enum，状态机校验仍归应用层，见 A2 §1）。
 
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  // 显式钉 FC 镜像（node:20-alpine / Alpine 3）engine 变体：build 期缺 openssl CLI
+  // 致探测默认 openssl-1.1.x musl 变体，Alpine 3 仅 libssl.so.3 → engine 加载失败
+  // （CR ga7zzjob 终裁 (c)）。native 必留=本地开发机 generate 零变化。
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
 }
 
 datasource db {
