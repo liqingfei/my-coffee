@@ -75,8 +75,9 @@ function emitError(e) {
   // body：经 fs.readFile 程序传，never argv（DATABASE_URL 不进 ps 可观测面）
   let body = null;
   if (BODYFILE) {
-    const raw = fs.readFileSync(BODYFILE, 'utf8');
-    body = JSON.parse(raw);
+    try {
+      body = JSON.parse(fs.readFileSync(BODYFILE, "utf8"));
+    } catch (e) { emitError(e); return; }   // ENOENT+SyntaxError 同归门禁③
   }
 
   let resp;

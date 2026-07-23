@@ -3,7 +3,7 @@
 // 优雅关闭顺序（CR 正确性约束，见 DESIGN.md 第六节）：
 //   SIGTERM → server.close() 拒新连接 → drain 存量(带超时) → prisma.$disconnect() → exit
 //   必须先关 HTTP 再断 DB，否则 drain 中的请求会拿到已断开的 DB 连接。
-// 设计阶段模板，未执行；待 DESIGN.md 评审通过 + RDS 就绪后随镜像 bake 生效。
+// 已 bake 入镜像（Dockerfile.fc L41 COPY 到 packages/backend/）并 C3 live（04 healthcheck 🟢，2026-07-23）。
 const path = require("path");
 // backend tsconfig rootDir="." + include=[src,prisma,tests] → tsc 保相对路径，输出 dist/src/...
 // （非扁平 dist/app；rootDir=. 对多目录 include 是正确的，shim 须匹配实际输出结构）。
@@ -22,7 +22,7 @@ const DRAIN_BUDGET_MS = SHUTDOWN_TIMEOUT_MS - DISCONNECT_BUDGET_MS;             
 
 const app = createApp();
 
-// 前端静态资源托管（部署层职责）。业务路由全由 createApp()（./dist/app）装配，
+// 前端静态资源托管（部署层职责）。业务路由全由 createApp()（./dist/src/app）装配，
 // /api 未知路由由 app.ts 的 /api 作用域 404 处理；此处仅静态+SPA 回落，不重复路由（CR ④）。
 const expressStatic = require("express").static;
 app.use(expressStatic(FRONTEND_DIST, { index: false }));
