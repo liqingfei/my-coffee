@@ -134,7 +134,13 @@ cfg={
   "runtime":"custom-container",
   "customContainerConfig":{
     "image": e("FC_IMAGE"),
-    "command":["sh","-c","npx prisma migrate deploy && node fc-server.js"],
+    # migrate 移出冷启（CR aohix7ut + TL ebwcq4mj 设计裁）：FC config command 覆盖镜像 CMD
+    # → 仅 node fc-server.js 无状态服务。migrate 走 02b-migrate.sh 独立 ECS 步骤（fail-first，
+    # 03 之前跑）。根因：FC 受限容器 schema engine 运行时下载品 EPERM；query engine 已焙进镜像
+    # （build generate+COPY node_modules），schema engine 仅 migrate 需随移出消灭。镜像 CMD 仍
+    # 含 migrate（封签 fcd43385 续立不改）=宣告式限期背离，FC config command 覆盖生效，
+    # C3 走通/TODO v2 批时 Dockerfile CMD 一致性扫（消 CMD×FC config 双源）。
+    "command":["node","fc-server.js"],
     "port":9000,
     "acrInstanceId": e("ACR_INSTANCE_ID")
   },
