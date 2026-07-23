@@ -1,0 +1,17 @@
+# Dockerfile.frontend — my-coffee 前端镜像（Vite 构建静态资源 + nginx 托管 + /api 反代后端）
+# 构建上下文为仓库根目录：
+#   docker build -f deploy/aliyun/standalone/Dockerfile.frontend -t <tag> .
+FROM node:20-alpine AS build
+WORKDIR /app
+COPY package.json package-lock.json ./
+COPY packages/backend/package.json ./packages/backend/
+COPY packages/frontend/package.json ./packages/frontend/
+RUN npm ci
+COPY packages/frontend ./packages/frontend
+COPY packages/backend ./packages/backend
+RUN cd packages/frontend && npx vite build
+
+FROM nginx:alpine
+COPY --from=build /app/packages/frontend/dist /usr/share/nginx/html
+COPY deploy/aliyun/standalone/nginx.conf /etc/nginx/conf.d/default.conf
+EXPOSE 80

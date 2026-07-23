@@ -1,0 +1,31 @@
+# Dockerfile.backend — my-coffee 后端镜像（Express + TS + Prisma/SQLite）
+# 构建上下文为仓库根目录：
+#   docker build -f deploy/aliyun/standalone/Dockerfile.backend -t <tag> .
+# 多阶段：build 阶段装全量依赖做 prisma generate + tsc；运行阶段只装生产依赖。
+FROM node:20-alpine AS build
+WORKDIR /app
+# 先拷 package 元信息利用缓存
+COPY package.json package-lock.json ./
+COPY packages/backend/package.json ./packages/backend/
+COPY packages/frontend/package.json ./packages/frontend/
+RUN npm ci
+COPY packages/backend ./packages/backend
+# 生成 Prisma Client + 编译 TS
+RUN cd packages/backend \
+ && npx prisma generate \
+ && npx tsc -p tsconfig.json
+
+FROM node:20-alpine
+WORKDIR /app
+ENV NODE_ENV=production
+COPY package.json package-lock.json ./
+COPY packages/backend/package.json ./packages/backend/
+COPY packages/frontend/package.json ./packages/frontend/
+RUN npm ci --omit=dev \
+ && cd packages/backend && npx prisma generate
+COPY --from=build /app/packages/backend/dist ./packages/backend/dist
+COPY packages/backend/prisma ./packages/backend/prisma
+WORKDIR /app/packages/backend
+EXPOSE 3001
+# 启动前自动执行 migrate deploy（幂等）；seed 由部署脚本首次起身后执行一次
+CMD ["sh","-c","npx prisma migrate deploy && node dist/index.js"]

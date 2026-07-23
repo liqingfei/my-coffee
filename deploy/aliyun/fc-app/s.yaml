@@ -1,0 +1,84 @@
+# s.yaml — my-coffee FC3 部署描述（方案二：custom-container + RDS PostgreSQL + 免ICP域名）
+# 【声明参考，非执行入口】实际部署由 deploy/aliyun/fc-app/03-fc-deploy.sh 用
+#   `aliyun fc-open` ROA 直调 FC3.0 API（版本 2023-03-30，--endpoint <acct>.<region>.fc.aliyuncs.com
+#   + --mode EcsRamRole）执行——s deploy 的 fc3 组件凭证链不支持 EcsRamRole（__provider
+#   枚举无 EcsRamRole dispatch，静态 AK 回退=铁律红线），已 pivot（CR xyw6o3wt (A)）。
+#   本文件保留作「配置事实源」声明参考：memorySize/timeout/instanceConcurrency/
+#   maximumInstanceCount/environmentVariables/vpcConfig/customContainerConfig 的审定值，
+#   03-fc-deploy.sh 消费这些值，不另造数。修改函数配置先改此文件再同步到 03。
+edition: 3.0.0
+name: my-coffee-fc
+# access 字段在 pivot 后 moot（s deploy 不再执行）：执行鉴权由 03-fc-deploy.sh 的
+# `--mode EcsRamRole --ram-role-name DEMODeploy` 原生承担，令牌 CLI 内部取自元数据，
+# 不进 argv/env 文件/disk。保留 default 仅为 s.yaml 语法完整，不参与运行时。
+access: default
+
+vars:
+  region: ${env(REGION)}
+
+resources:
+  mycoffee:
+    component: fc3
+    props:
+      region: ${env(REGION)}
+      functionName: ${env(FC_FUNCTION_NAME)}
+      # custom-container：镜像走 ACR VPC 端点，FC 内网拉取
+      runtime: custom-container
+      customContainerConfig:
+        # 镜像引用：ACR VPC 端点 / 命名空间 / 仓库名 : tag
+        image: ${env(ACR_REGISTRY)}/${env(ACR_NAMESPACE)}/my-coffee-fc:${env(IMAGE_TAG)}
+        command: ["sh","-c","npx prisma migrate deploy && node fc-server.js"]
+        port: 9000
+      handler: index
+      memorySize: 512
+      timeout: 60          # 单次请求超时；FC 冷启动 + RDS 查询留余量
+      # instanceConcurrency: 10   # 部署侧连接池数学（见 DESIGN.md 第五节）：×3 ≤ RDS max_connections
+      instanceConcurrency: 10
+      # 最大并发实例数硬上限（CR ② 必改）：把 20 钉死为配置值，使 20×3=60≤2420（RDS max_connections 实测真值）成为定理而非假设。
+      # FC3 实情（SDK @alicloud/fc20230330 实核）：无 flat maximumInstanceCount 字段——maxInstances
+      # 在 PutScalingConfig 的 horizontalScalingPolicies[].ScalingPolicy 内（需 auto-scaling rule）。
+      # 即"20 上限"=定义一条 scaling policy，属运维策略非部署步骤。03-fc-deploy.sh 不设（no-op 报账，
+      # TL bmec5e8z 裁 (b)：CLI 猜 schema 不稳、控制台人定更稳），折进 TODO v2 控制台五件批（@aidbs-demo
+      # 人定 minInstances/maxInstances/tracking metric+target）。本值 20=zgn7xu3x 审定值，硬账不丢。
+      maximumInstanceCount: 20
+      # VPC 配置：与 RDS 同 VPC，FC 经内网访 RDS:5432（不走公网）
+      vpcConfig:
+        vpcId: ${env(FC_VPC_ID)}
+        # 块序列（非 flow `[...]`）：js-yaml 在 flow 上下文把 `${env(...)}` 的 `{` 当 flow-mapping 指示符
+        # → "missed comma" 解析错；块序列里 `{` 是 plain scalar 中段字符，安全。
+        vSwitchIds:
+          - ${env(FC_VSWITCH_ID)}
+        securityGroupId: ${env(FC_SG_ID)}
+      environmentVariables:
+        NODE_ENV: production
+        # RDS 内网连接串（控制台/s.yaml env 注入，不进镜像/仓库/日志）
+        # connection_limit=3 钉在 RDS_DATABASE_URL 串尾 ?connection_limit=3（A2 单一事实源，Prisma 从 URL 读）；
+        # 不另注入 CONNECTION_LIMIT env——两处定义同一事实会静默漂移（A2 已否决独立 env 读取）。
+        DATABASE_URL: ${env(RDS_DATABASE_URL)}
+        FRONTEND_DIST: /app/frontend-dist
+        PORT: "9000"
+        # 优雅关闭总预算，必须 < FC 平台 SIGTERM→SIGKILL 宽限期（见 DESIGN.md §6）
+        SHUTDOWN_TIMEOUT_MS: "8000"
+      # HTTP 触发器 + 免 ICP 域名
+      triggers:
+        - name: http
+          type: http
+          config:
+            authType: anonymous
+            methods: [GET, POST, PUT, DELETE, OPTIONS]
+            # 默认 https://<account>.<region>.fcapp.run 免 ICP；自定义域在控制台绑定
+      # 自定义域（devsapp.net，Aliyun 拥有域，免 ICP）——【声明参考，非 s 执行入口】
+      #   实际绑定由 deploy/aliyun/fc-app/05-bind-domain.sh 用 fc_api.js 的 /custom-domains
+      #   分派（createCustomDomain typed 方法，EcsRamRole 鉴权）执行。本块是「配置事实源」
+      #   声明：protocol/routeConfig 的审定值，05 消费不另造数。
+      #   protocol=HTTPS（CR/QA 安全门禁：PII 入口禁 HTTP 明文 CWE-319；HTTP,HTTPS 的 HTTP
+      #   分支会以明文回 PII=红灯，故 HTTPS-only）。首轮无 certConfig 试 auto-provision
+      #   （devsapp.net=Aliyun 域，FC 可能自动签 *.fc.devsapp.net）；cert required 则转
+      #   aliyun SSL 免费证书 PEM 路径（门禁⑥ 同 DATABASE_URL 口径，CR ⑤）。
+      customDomains:
+        - domainName: ${env(FC_FUNCTION_NAME)}.fcv3.5884645900446711.${env(REGION)}.fc.devsapp.net
+          protocol: HTTPS
+          routeConfig:
+            routes:
+              - functionName: ${env(FC_FUNCTION_NAME)}
+                path: /*

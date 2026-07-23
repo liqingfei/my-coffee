@@ -1,0 +1,3 @@
+# node 依赖不入库（bulky，非源；package.json + package-lock.json 已钉版本可复现）
+# (b3') fc_api.js 运行前 03-fc-deploy.sh 会 npm ci 就近安装到本目录 node_modules
+node_modules/

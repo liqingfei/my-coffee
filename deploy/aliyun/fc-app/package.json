@@ -1,0 +1,10 @@
+{
+  "name": "my-coffee-fc-app-deps",
+  "version": "1.0.0",
+  "private": true,
+  "description": "(b3') FC3.0 API helper 依赖——fc_api.js 走 @alicloud/fc20230330 typed 方法（aliyun CLI --body 不展开文件前缀的替代路径）",
+  "dependencies": {
+    "@alicloud/fc20230330": "4.7.9",
+    "@alicloud/credentials": "2.4.5"
+  }
+}
