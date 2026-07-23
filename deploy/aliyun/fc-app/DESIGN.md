@@ -123,9 +123,13 @@ SIGTERM/SIGINT → server.close()（拒新连接）→ drain 存量请求（带�
 >
 > **真跑实证（2026-07-22 23:34 nr4uzthr）**：IMAGE_TAG=35f9252 ./03-fc-deploy.sh 端到端 **CreateFunction ✅ green**——函数 my-coffee-proxy 已建（runtime=custom-container / image=`…my-coffee-fc:35f9252` digest `96bf5d67…` / state=Pending 待 04 image-pull+冷启 / memorySize512·timeout60·instanceConcurrency10 审定值 / vpcConfig set / environmentVariables keys=[DATABASE_URL,FRONTEND_DIST,NODE_ENV,PORT,SHUTDOWN_TIMEOUT_MS] / DATABASE_URL 值长=116 真值，值未印）；GetFunction→FunctionNotFound→fc_route_get return 1→CreateFunction POST 分流正确，SDK helper 机制生产资源端到端实证通过。**settle 双半满足**（CR🟢 95us6nem + 真跑 CreateFunction green）。
 >
+> **【2026-07-23 04 实跑 uypx5j8x】**：04 healthcheck 跑炸 container start ❌ CAExited EPERM——image-pull ✅（acrInstanceId 仲裁者 PASSED，FC 从 ACR VPC 拉镜像 `:35f9252` digest `96bf5d67…` 成功）+ DATABASE_URL ✅ consumed（值长 116 注入生效），但容器冷启 `npx prisma migrate deploy` 运行时下载 schema engine 加载失败（详见 §七 migrate drift 注）。04 blocker = Prisma schema engine runtime download，非镜像/鉴权/网络。修向见 §七 migrate drift（migrate 移出冷启 → 独立 ECS 步骤）。
+>
 > **不变项**：4 action 集（GetFunction / CreateFunction|UpdateFunction / CreateTrigger）⊆ S2 六写名单；Dockerfile.fc 封签 fcd43385…e8e 零动（第九验字节一致）；s.yaml 头注转「声明参考非执行入口」（flow-seq 修保留）；幂等 404 分流（FunctionNotFound=预期首发→Create，存在→Update）；`acrInstanceId=cri-16ux7uiujvf8lfeg` 钉死（ACR 企业版+-vpc 镜像 host，不钉 FC 拉镜像端点解析错必挂；GetFunction 响应不回显该 input-only 字段，04 须验 image-pull 不挂端点解析）；memorySize512/timeout60/instanceConcurrency10（审定值三源一致：s.yaml↔03↔fc-server.js）；EcsRamRole 不回退静态 AK。
 >
 > **CreateTrigger AccessDenied（RAM 缺口，非机制问题）**：真跑首跑 CreateTrigger ❌ AccessDenied（403 / `caller is not authorized to perform 'fc:CreateTrigger' on resource 'acs:fc:cn-hangzhou:5884645900446711:functions/my-coffee-proxy/triggers/http'` / RequestId `1-6a60e291-15ccc054-37a1225fda73`）= CR 预判的 ARN 子路径残险兑现（DEMODeploy 现挂 `functions/my-coffee-proxy` 作用域，trigger 子路径 `functions/my-coffee-proxy/triggers/*` 未覆盖→403）。**非脚本 bug**（helper 错误形状归一化 blob→fc_die 透出 RequestId，surface 不死暗处，跑炸即 surface 纪律执行）。球 @aidbs-demo 控制台补 `fc:CreateTrigger` on `acs:fc:cn-hangzhou:5884645900446711:functions/my-coffee-proxy/triggers/*`（子路径收窄非 `functions/*` 全局），补后 Deploy 自重跑 03（幂等：GetFunction→exists→UpdateFunction PUT 同镜像+CreateTrigger 命中→success）→ 04。函数已建无 HTTP entry（trigger 待 ARN 补）；回滚=IMAGE_TAG=<旧digest> 重跑 03 UpdateFunction 换镜像（digest 固定可复现）。
+>
+> **【2026-07-23 supersede】CreateTrigger ✅ green**：@aidbs-demo 补授 `fc:CreateTrigger` on `acs:fc:cn-hangzhou:5884645900446711:functions/my-coffee-proxy/triggers/*`（子路径收窄），首跑仍 AccessDenied（RequestId `1-6a616b5f`，RAM 策略传播延迟非 scope 未对）→ +5min retry → **green**（假设(a)兑现，scope 本就对，非 (b) resource-group `rg-acfnycysnzxgx5y`）。urlInternet=`https://my-coffee-proxy-dpuvjfhfmv.cn-hangzhou.fcapp.run`。03 机制闭环（CreateFunction ✅ + CreateTrigger ✅ + image-pull ✅ + DATABASE_URL ✅ consumed）。
 >
 > **04 拉取鉴权 deferred**：FC 函数侧服务角色需 `cr:PullRepository` 该 repo（非 DEMODeploy ECS 侧角色，FC 侧另一授权面），04 拉不动再补，不进本轮 RAM。撞墙时频道报名（per CR 3mrsti4s 新审计纪律「往后新增 RAM action 先频道报名再添」）再 @aidbs-demo 配 FC 侧服务角色。
 >
@@ -134,6 +138,20 @@ SIGTERM/SIGINT → server.close()（拒新连接）→ drain 存量请求（带�
 - FC 换镜像/代码可直接 `s deploy` 覆盖（UpdateFunction PUT，免本地重建函数）。
 - 回滚：`IMAGE_TAG=<旧tag/digest> ./03-fc-deploy.sh` 重跑滚回旧镜像。镜像可固定 digest。
 - 迁移（migrate deploy）：本期方案为 FC 实例冷启动时容器 CMD 跑 `prisma migrate deploy`（幂等，Prisma migrations 表保证不重复应用）。**并发安全**：本项目 Prisma（prisma@5.22.0，schema-engine 二进制内置 `SELECT pg_advisory_lock(72707369)`）在 PG 上以 advisory lock 串行化并发 migration 应用，故多实例同时冷启动不会并发改 schema（非 correctness 竞态）；余 concern 是 lock-wait 延迟（突发冷启动排队），本期 `instanceConcurrency=10` + 本期低流量使概率低，规模化成问题再提取 migrate 为部署期一次性 `s local invoke` 或独立 migrate 函数（记录为后续优化，不本期实现）。
+
+> **Drift 注（2026-07-23 实跑 04 后补，PM plan-sync per CR aohix7ut 实证纠正 + TL ebwcq4mj 裁 + CR 确认设计方向）**：本段原设「migrate 在 FC 冷启跑、规模化成问题再提取为独立步骤（后续优化）」被**运行时约束 pull forward**（非规模化触发）——
+>
+> **drift 触发因**：04 真跑（uypx5j8x）image-pull ✅ + DATABASE_URL ✅ consumed，但 container start ❌ CAExited EPERM = **FC 受限容器 × schema engine 运行时下载品的 exec 限制**。容器冷启跑 `npx prisma migrate deploy` 运行时下载 schema engine（linux-musl 变体），沙箱 exec 限制 + 运行时平台探测选错 openssl-1.1.x 变体 → musl 根文件系统加载不出 → garbage 输出 → parse error → EPERM。**非规模化触发**（原 L118 anticipated 的后续优化被运行时约束提前）。
+>
+> **实证纠正（CR aohix7ut git show 核 Dockerfile.fc）**：query engine **本已焙进镜像**（build 段 `npx prisma generate` + runtime 段 COPY node_modules 含 `.prisma`/`@prisma/client`，注释「镜像体积换正确性」有意）；消灭的是 **migrate 及其唯一依赖 schema engine 的运行时下载**——**不是「补 engine 预焙」**（query engine 已在，schema engine 随 migrate 移出容器后根本不再需要）。「engine 不在镜像里」只对 schema engine 成立。
+>
+> **TL 裁（ebwcq4mj）+ CR 确认设计方向**：migrate 移出 FC 冷启 → 独立 ECS 一次性步骤，FC 只 `node fc_server.js`（无状态服务）。好品味非补丁——消除特殊情况本身（冷启 migrate 是特殊情况，三个失效模式互相缠绕），C4「并发冷启 migrate 不死锁」验收项**整类消灭**（无并发冷启 migrate 场景即无死锁面）。换入 C4 验收：migrate fail-first + applied 确认 + fc_user DDL 权限界 + additive-only 不变式（至 GA，新 schema 兼容旧码=回滚窗）。
+>
+> **修面两段实证（CR aohix7ut 裁，别先验全修）**：**Step 1（零 re-bake，最快实证）**= ① 03 `build_function_config` command → `["node","fc-server.js"]`（FC config command 覆盖镜像 CMD）；② 新 ECS 一次性 migrate 步骤（`02b-migrate.sh`：`docker run --rm` 同款镜像跑 `npx prisma migrate deploy` via DATABASE_URL）。**Dockerfile.fc 零改动 → 封签 fcd43385 续立、`:35f9252` 复用、02 不重跑**。实证两点：query engine 在 FC 沙箱起不起得来（dlopen 加载，非 execve，预期绿）+ ECS migrate 通路。**Step 2（仅当 query engine 也撞 libssl/EPERM）**= Dockerfile.fc 修（apk add openssl/libc6-compat 或 binaryTargets 静态 musl）→ 封签变 → CR 重审 → digest 重焙 → 02+03 新 tag。
+>
+> **ECS migrate 六验收线（CR aohix7ut 审的尺）**：① fail-first 序（migrate 跑在 03 UpdateFunction 前，schema 先于 code，败即 abort=函数永不接期待新 schema 的码）；② DATABASE_URL 走 03 同款 `~/.aliyun-env` 同文件（deploy 现有托管面零新增）；③ 频道+日志只状态（`pending N→0 applied` 键名不印值，门禁⑥）；④ 幂等可重跑（migrate deploy 只应 pending）；⑤ additive-only 不变式至 GA（新 schema 须兼容旧码=回滚窗）；⑥ 注入经环境变量不经 argv（ps 面，`--env-file` 非 `-e 值`）。机制 deploy 自选（ECS npx 或 docker run 带 env 皆可），脚本产出报审一轮。
+>
+> **一致性扫（折进下次 bake，显式批的限期背离）**：Dockerfile.fc CMD → `node fc-server.js` + 删 migrate 注释段，消灭 CMD × FC config 双源。Step 1 若绿且无需 Step 2，则 C3 走通/TODO v2 批时专扫一 bake。
 
 ## 八、风险清单
 
