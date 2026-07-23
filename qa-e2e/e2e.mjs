@@ -4,7 +4,16 @@ import { chromium } from "playwright";
 // 用法示例：CHROME_PATH=/root/.cache/ms-playwright/chromium-1228/chrome-linux64/chrome node qa-e2e/e2e.mjs
 // E2E_BASE_URL 覆盖前端地址（默认 http://127.0.0.1:5173，/api 经 vite 代理到后端 3001）。
 const CHROME = process.env.CHROME_PATH;
-const launchOpts = CHROME ? { executablePath: CHROME } : {};
+// Staging-only（E2E_IGNORE_CERT=1）：跳过 TLS 证书 trust chain 校验（Chromium
+// --ignore-certificate-errors + context ignoreHTTPSErrors）。默认 off（未设=零触发），prod run
+// 不受影响。仅跳过证书校验，TLS 加密仍开（非 HTTP 明文，不触 CWE-319 硬门禁）。用于对未挂有效
+// 证书的 staging 域跑 E2E（如 devsapp.net auto-cert 尚未 provision 时）。勿用于 prod trust 面校验。
+const IGNORE_CERT = process.env.E2E_IGNORE_CERT === "1";
+const launchOpts = {
+  ...(CHROME ? { executablePath: CHROME } : {}),
+  ...(IGNORE_CERT ? { args: ["--ignore-certificate-errors", "--ignore-certificate-errors-spki-list="] } : {}),
+};
+const CTX_BASE = IGNORE_CERT ? { ignoreHTTPSErrors: true } : {};
 const BASE = process.env.E2E_BASE_URL ?? "http://127.0.0.1:5173";
 
 let pass = 0, fail = 0;
@@ -18,7 +27,7 @@ const browser = await chromium.launch(launchOpts);
 // ---------- P0-2: 下单页菜单 loading 态（throttle /api/menu 捕获 loading） ----------
 console.log("P0-2 下单页 loading 态");
 {
-  const ctx = await browser.newContext();
+  const ctx = await browser.newContext(CTX_BASE);
   const page = await ctx.newPage();
   page.setDefaultTimeout(15000);
   await page.route("**/api/menu", async (route) => {
@@ -37,7 +46,7 @@ console.log("P0-2 下单页 loading 态");
 // ---------- E2E-2: 菜单分类筛选 ----------
 console.log("E2E-2 菜单分类筛选");
 {
-  const ctx = await browser.newContext();
+  const ctx = await browser.newContext(CTX_BASE);
   const page = await ctx.newPage();
   page.setDefaultTimeout(15000);
   await page.goto(BASE + "/");
@@ -58,7 +67,7 @@ console.log("E2E-2 菜单分类筛选");
 // ---------- E2E-5 异常路径(前端校验) + P0 防重提交 + P0-3 banner + P0-1 二次确认 + E2E-1 下单→配送 ----------
 console.log("E2E-5 异常路径 / P0 防重提交 / P0-3 banner / P0-1 二次确认 / E2E-1 下单→配送");
 {
-  const ctx = await browser.newContext();
+  const ctx = await browser.newContext(CTX_BASE);
   const page = await ctx.newPage();
   page.setDefaultTimeout(15000);
 
@@ -181,7 +190,7 @@ console.log("E2E-5 异常路径 / P0 防重提交 / P0-3 banner / P0-1 二次确
 // ---------- P1: 375px 视口响应式（订单详情不溢出） ----------
 console.log("P1 375px 视口响应式");
 {
-  const ctx = await browser.newContext({ viewport: { width: 375, height: 667 } });
+  const ctx = await browser.newContext({ ...CTX_BASE, viewport: { width: 375, height: 667 } });
   const page = await ctx.newPage();
   page.setDefaultTimeout(15000);
   await page.goto(BASE + "/order");
@@ -202,7 +211,7 @@ console.log("P1 375px 视口响应式");
 // ---------- E2E-5b: 后端 400 兜底（直访不存在订单，展示错误而非崩溃） ----------
 console.log("E2E-5b 异常路径 (后端400兜底)");
 {
-  const ctx = await browser.newContext();
+  const ctx = await browser.newContext(CTX_BASE);
   const page = await ctx.newPage();
   page.setDefaultTimeout(15000);
   await page.goto(BASE + "/orders/999999");
