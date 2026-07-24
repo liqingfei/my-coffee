@@ -49,12 +49,15 @@ export function DeliveryTaskPage() {
     );
   }
   if (loading) return <p>加载任务中…</p>;
-  const error = loadError || pushError;
-  if (error) return <p className="error">{error}</p>;
+  // loadError 致命（列表拉取失败）→ 整页 early-return；
+  // pushError 非致命（单次推进 5xx/超时）→ 行内渲染，任务列表与推进按钮保留可重试。
+  // 对齐 DeliveryPage/OrderDetailPage 的错误分级（Scene 6 审查 A：消除不一致的特殊处理）。
+  if (loadError) return <p className="error">{loadError}</p>;
 
   return (
     <section>
       <h1>配送任务（{person}）</h1>
+      {pushError && <p className="error">{pushError}</p>}
       <table className="table">
         <thead>
           <tr>

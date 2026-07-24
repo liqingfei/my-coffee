@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 import { api } from "../api";
+import { AssignDeliveryForm } from "../components/AssignDeliveryForm";
 import { useCreateDelivery } from "../hooks/useCreateDelivery";
-import { useDeliveryAssign } from "../hooks/useDeliveryAssign";
 import { useDeliveryStatusPush } from "../hooks/useDeliveryStatusPush";
 import { useRole } from "../hooks/useRole";
 import type { Order } from "../types";
 import {
   DELIVERY_STATUS_LABEL,
   ORDER_STATUS_LABEL,
+  canPushDelivery,
   nextDeliveryStatus,
 } from "../types";
 
@@ -19,7 +20,6 @@ export function OrderDetailPage() {
   const { role, person } = useRole();
   const [order, setOrder] = useState<Order | null>(null);
   const [loadError, setLoadError] = useState("");
-  const [assignName, setAssignName] = useState("");
   // P0-3：下单成功跳转过来时显示成功 banner（直接访问 URL 不显示）
   const [showSuccess, setShowSuccess] = useState(
     Boolean((location.state as { fromSubmit?: boolean } | null)?.fromSubmit)
@@ -38,7 +38,6 @@ export function OrderDetailPage() {
   const { createDelivery, creating, error: deliveryError } =
     useCreateDelivery(load);
   const { push, pushing, error: pushError } = useDeliveryStatusPush(load);
-  const { assign, assigning, error: assignError } = useDeliveryAssign(load);
 
   const error = loadError || deliveryError;
   if (error) return <p className="error">{error}</p>;
@@ -46,9 +45,7 @@ export function OrderDetailPage() {
 
   // 配送操作权限（UI 隔离，非安全边界）：管理员可推进+分配；配送员仅推进己方单；顾客只读。
   const d = order.delivery;
-  const canPush =
-    role === "admin" ||
-    (role === "courier" && !!person && d?.deliveryPerson === person);
+  const canPush = canPushDelivery(role, person, d?.deliveryPerson);
   const canAssign = role === "admin";
   const next = d ? nextDeliveryStatus(d.status) : null;
 
@@ -139,31 +136,7 @@ export function OrderDetailPage() {
           <Link className="btn" to={`/delivery/${d.id}`}>
             查看配送追踪 →
           </Link>
-          {canAssign && (
-            <div className="form-block">
-              {assignError && <p className="error">{assignError}</p>}
-              <input
-                className="person-input"
-                data-testid="delivery-assign-input"
-                aria-label="分配配送员姓名"
-                placeholder="分配配送员姓名"
-                value={assignName}
-                onChange={(e) => setAssignName(e.target.value)}
-              />{" "}
-              <button
-                type="button"
-                className="btn"
-                data-testid="delivery-assign-submit"
-                disabled={assigning || !assignName.trim()}
-                onClick={() => {
-                  assign(d.id, assignName);
-                  setAssignName("");
-                }}
-              >
-                {assigning ? "分配中…" : "分配配送员"}
-              </button>
-            </div>
-          )}
+          {canAssign && <AssignDeliveryForm deliveryId={d.id} onChanged={load} />}
         </>
       ) : (
         <button
