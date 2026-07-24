@@ -88,6 +88,24 @@ async function seedOrderDelivery(mark) {
 
 const browser = await chromium.launch(launchOpts);
 
+// ---- 运行级 DB 重置：保证每次运行数据独立、确定性（TRUNCATE + 重 seed 菜单） ----
+async function resetDb() {
+  const url = process.env.DATABASE_URL;
+  if (!url) return; // 未提供 DB 串则跳过，依赖外部已清理
+  const { PrismaClient } = await import("@prisma/client");
+  const prisma = new PrismaClient({ datasources: { db: { url } } });
+  try {
+    await prisma.$executeRaw`TRUNCATE TABLE "Delivery", "Order", "MenuItem" RESTART IDENTITY CASCADE`;
+    // 重 seed 美式咖啡（id 重置后=1），seedOrderDelivery 依赖 menuItemId=1
+    await prisma.menuItem.create({
+      data: { name: "美式咖啡", description: "经典黑咖啡", price: 18, category: "咖啡", available: true },
+    });
+  } finally {
+    await prisma.$disconnect();
+  }
+}
+await resetDb();
+
 // ============ E1 管理员：OrderListPage 推进全流程 ============
 console.log("E1 管理员 OrderListPage 推进 pending→delivered");
 {
@@ -108,8 +126,9 @@ console.log("E1 管理员 OrderListPage 推进 pending→delivered");
     const after = await page.locator(T.deliveryStatus).first().textContent();
     check(`E1 推进 ${FLOW[i - 1]}→${FLOW[i]}`, after === LABEL[FLOW[i]], `(before=${before} after=${after})`);
   }
-  const disabled = await page.locator(T.pushBtn).first().isDisabled().catch(() => true);
-  check("E1 delivered 后 push-btn disabled", disabled === true);
+  // Dev 契约：delivered 时 push-btn 不渲染（非 disabled）。断言按钮不存在。
+  const pushCount = await page.locator(T.pushBtn).count();
+  check("E1 delivered 后 push-btn 不渲染", pushCount === 0, `(count=${pushCount})`);
   await ctx.close();
 }
 
@@ -154,14 +173,16 @@ console.log("E4 配送员 DeliveryTaskPage 只见己方单");
   page.setDefaultTimeout(15000);
   const mine = await seedOrderDelivery("E4-mine");
   const other = await seedOrderDelivery("E4-other");
-  // mine 分配给张三，other 分配给李四
+  // 用本用例独占的配送员姓名，避免其他用例残留数据污染过滤结果（数据独立原则）
+  const me = "张三-E4";
+  const otherPerson = "李四-E4";
   await api(`/deliveries/${mine.deliveryId}/assign`, {
-    method: "PATCH", body: JSON.stringify({ deliveryPerson: "张三" }),
+    method: "PATCH", body: JSON.stringify({ deliveryPerson: me }),
   });
   await api(`/deliveries/${other.deliveryId}/assign`, {
-    method: "PATCH", body: JSON.stringify({ deliveryPerson: "李四" }),
+    method: "PATCH", body: JSON.stringify({ deliveryPerson: otherPerson }),
   });
-  await page.goto(`${BASE}/deliveries?role=courier&person=张三`);
+  await page.goto(`${BASE}/deliveries?role=courier&person=${encodeURIComponent(me)}`);
   await page.waitForSelector(T.taskItem);
   const items = await page.locator(T.taskItem).allInnerTexts();
   const allMine = items.every((t) => /QA-E4-mine/.test(t));
@@ -177,10 +198,11 @@ console.log("E5 配送员 推进己方单 + 隔离");
   const page = await ctx.newPage();
   page.setDefaultTimeout(15000);
   const mine = await seedOrderDelivery("E5");
+  const me = "张三-E5";
   await api(`/deliveries/${mine.deliveryId}/assign`, {
-    method: "PATCH", body: JSON.stringify({ deliveryPerson: "张三" }),
+    method: "PATCH", body: JSON.stringify({ deliveryPerson: me }),
   });
-  await page.goto(`${BASE}/deliveries?role=courier&person=张三`);
+  await page.goto(`${BASE}/deliveries?role=courier&person=${encodeURIComponent(me)}`);
   await page.waitForSelector(T.taskItem);
   await page.locator(T.pushBtn).first().click();
   await page.waitForFunction(
@@ -188,11 +210,12 @@ console.log("E5 配送员 推进己方单 + 隔离");
   );
   const status = await page.locator(T.deliveryStatus).first().textContent();
   check("E5 配送员推进己方单 pending→picked_up", status === "已取货", `(status=${status})`);
-  // 切换 person=李四 后原单不可见
-  await page.goto(`${BASE}/deliveries?role=courier&person=李四`);
+  // 切到一个从未被任何用例分配过的配送员，验证隔离（避免残留数据污染）
+  const nobody = "无人-E5";
+  await page.goto(`${BASE}/deliveries?role=courier&person=${encodeURIComponent(nobody)}`);
   await page.waitForTimeout(500);
   const count = await page.locator(T.taskItem).count();
-  check("E5 切 person=李四 后原单不可见(隔离)", count === 0, `(count=${count})`);
+  check("E5 切 person=无人 后原单不可见(隔离)", count === 0, `(count=${count})`);
   await ctx.close();
 }
 
@@ -307,12 +330,13 @@ console.log("B4 刷新角色持久化");
   const page = await ctx.newPage();
   page.setDefaultTimeout(15000);
   const { deliveryId } = await seedOrderDelivery("B4");
-  await page.goto(`${BASE}/deliveries?role=courier&person=张三`);
+  const me = "张三-B4";
+  await page.goto(`${BASE}/deliveries?role=courier&person=${encodeURIComponent(me)}`);
   await page.waitForTimeout(300);
   await page.reload();
   await page.waitForTimeout(300);
-  const url = page.url();
-  const roleKept = /[?&]role=courier/.test(url) && /[?&]person=张三/.test(url);
+  const url = decodeURIComponent(page.url());
+  const roleKept = /[?&]role=courier/.test(url) && url.includes(`person=${me}`);
   check("B4 刷新后 role/person 保留(URL)", roleKept, `(url=${url})`);
   await ctx.close();
 }
