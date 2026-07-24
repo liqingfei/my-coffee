@@ -87,3 +87,43 @@ export async function transitionDeliveryStatus(
   });
   return serializeDelivery(updated);
 }
+
+// 配送单列表：deliveryPerson 缺省返回全部（管理员全局视角）；
+// 传值则精确匹配该配送员（配送员只看己方任务）。未分配单 deliveryPerson=null，仅在全量时可见。
+export async function listDeliveries(
+  deliveryPerson?: string,
+): Promise<DeliveryResponse[]> {
+  const where = deliveryPerson ? { deliveryPerson } : {};
+  const deliveries = await prisma.delivery.findMany({
+    where,
+    include: { order: { select: orderSelect } },
+    orderBy: { id: "asc" },
+  });
+  return deliveries.map(serializeDelivery);
+}
+
+// 分配配送员：手动指派（本期 UI 角色模拟，无认证）。
+// 空姓名 400；配送单不存在 404；已送达单不可再分配 400（线性流程终态保护）。
+export async function assignDeliveryPerson(
+  id: number,
+  input: { deliveryPerson: unknown },
+): Promise<DeliveryResponse> {
+  const person =
+    typeof input.deliveryPerson === "string" ? input.deliveryPerson.trim() : "";
+  if (!person) {
+    throw badRequest("缺少 body.deliveryPerson（配送员姓名）");
+  }
+  const delivery = await prisma.delivery.findUnique({ where: { id } });
+  if (!delivery) {
+    throw notFound(`配送单不存在：id=${id}`);
+  }
+  if (delivery.status === "delivered") {
+    throw badRequest("已送达的配送单不可再分配");
+  }
+  const updated = await prisma.delivery.update({
+    where: { id },
+    data: { deliveryPerson: person },
+    include: { order: { select: orderSelect } },
+  });
+  return serializeDelivery(updated);
+}

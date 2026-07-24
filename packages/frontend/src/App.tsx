@@ -1,9 +1,11 @@
 import { NavLink, Route, Routes } from "react-router-dom";
+import { RoleSwitcher } from "./components/RoleSwitcher";
 import { MenuPage } from "./pages/MenuPage";
 import { OrderPage } from "./pages/OrderPage";
 import { OrderListPage } from "./pages/OrderListPage";
 import { OrderDetailPage } from "./pages/OrderDetailPage";
 import { DeliveryPage } from "./pages/DeliveryPage";
+import { DeliveryTaskPage } from "./pages/DeliveryTaskPage";
 
 export default function App() {
   return (
@@ -17,7 +19,9 @@ export default function App() {
             </NavLink>
             <NavLink to="/order">下单</NavLink>
             <NavLink to="/orders">订单</NavLink>
+            <NavLink to="/deliveries">配送任务</NavLink>
           </nav>
+          <RoleSwitcher />
         </div>
       </header>
       <main className="container main">
@@ -26,6 +30,7 @@ export default function App() {
           <Route path="/order" element={<OrderPage />} />
           <Route path="/orders" element={<OrderListPage />} />
           <Route path="/orders/:id" element={<OrderDetailPage />} />
+          <Route path="/deliveries" element={<DeliveryTaskPage />} />
           <Route path="/delivery/:id" element={<DeliveryPage />} />
           <Route path="*" element={<p>页面不存在</p>} />
         </Routes>

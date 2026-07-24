@@ -10,6 +10,8 @@ vi.mock("../api", () => ({
   api: {
     listOrders: vi.fn(),
     createDelivery: vi.fn(),
+    updateDeliveryStatus: vi.fn(),
+    assignDeliveryPerson: vi.fn(),
   },
 }));
 
@@ -28,9 +30,10 @@ function makeOrder(over: Partial<Order> = {}): Order {
   };
 }
 
-function renderPage() {
+// 默认无 ?role= → useRole 解析为 admin
+function renderPage(initialEntries: string[] = ["/orders"]) {
   return render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={initialEntries}>
       <OrderListPage />
     </MemoryRouter>,
   );
@@ -65,6 +68,7 @@ describe("OrderListPage", () => {
           status: "delivered",
           fee: 5,
           estimatedTime: null,
+          deliveryPerson: "王五",
           createdAt: "2026-07-23T11:00:00.000Z",
         },
       }),
@@ -80,6 +84,8 @@ describe("OrderListPage", () => {
     // 状态标签（chip 与 badge 各一处，共 2 处）
     expect(screen.getAllByText("待确认")).toHaveLength(2);
     expect(screen.getAllByText("已完成")).toHaveLength(2);
+    // 配送列回显配送员
+    expect(screen.getByText("王五")).toBeInTheDocument();
 
     const links = screen.getAllByRole("link", { name: "查看详情" });
     expect(links).toHaveLength(2);
@@ -129,6 +135,7 @@ describe("OrderListPage", () => {
         status: "pending",
         fee: 5,
         estimatedTime: null,
+        deliveryPerson: null,
         createdAt: "2026-07-23T11:00:00.000Z",
       },
     });
@@ -169,6 +176,81 @@ describe("OrderListPage", () => {
     await user.click(await screen.findByRole("button", { name: "创建配送" }));
 
     expect(await screen.findByText("配送创建失败")).toBeInTheDocument();
+    expect(screen.getByText("#1")).toBeInTheDocument();
+  });
+
+  // ---------- 配送推进（管理员视角，覆盖 QA E1 列表入口） ----------
+  it("管理员：有配送单且非终态时显示推进按钮，点击调 updateDeliveryStatus 并刷新", async () => {
+    const user = userEvent.setup();
+    const pendingDelivery = makeOrder({
+      id: 1,
+      delivery: {
+        id: 9,
+        orderId: 1,
+        status: "pending",
+        fee: 5,
+        estimatedTime: null,
+        deliveryPerson: null,
+        createdAt: "2026-07-23T11:00:00.000Z",
+      },
+    });
+    vi.mocked(api.listOrders).mockResolvedValue([pendingDelivery]);
+    vi.mocked(api.updateDeliveryStatus).mockResolvedValue({} as never);
+
+    renderPage(); // 默认 admin
+    const pushBtn = await screen.findByTestId("delivery-push-btn");
+    expect(pushBtn).toHaveTextContent("推进到「已取货」");
+
+    await user.click(pushBtn);
+    expect(api.updateDeliveryStatus).toHaveBeenCalledWith(9, "picked_up");
+    // 推进后重拉列表（load）
+    await waitFor(() => expect(api.listOrders).toHaveBeenCalledTimes(2));
+  });
+
+  it("顾客视角：不显示推进按钮", async () => {
+    vi.mocked(api.listOrders).mockResolvedValue([
+      makeOrder({
+        id: 1,
+        delivery: {
+          id: 9,
+          orderId: 1,
+          status: "pending",
+          fee: 5,
+          estimatedTime: null,
+          deliveryPerson: null,
+          createdAt: "2026-07-23T11:00:00.000Z",
+        },
+      }),
+    ]);
+    renderPage(["/orders?role=customer"]);
+    await screen.findByTestId("delivery-status");
+    expect(screen.queryByTestId("delivery-push-btn")).not.toBeInTheDocument();
+  });
+
+  it("推进失败：显示后端错误文案，列表不清空", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.listOrders).mockResolvedValue([
+      makeOrder({
+        id: 1,
+        delivery: {
+          id: 9,
+          orderId: 1,
+          status: "pending",
+          fee: 5,
+          estimatedTime: null,
+          deliveryPerson: null,
+          createdAt: "2026-07-23T11:00:00.000Z",
+        },
+      }),
+    ]);
+    vi.mocked(api.updateDeliveryStatus).mockRejectedValue(
+      new Error("非法的配送状态流转"),
+    );
+
+    renderPage();
+    await user.click(await screen.findByTestId("delivery-push-btn"));
+
+    expect(await screen.findByText("非法的配送状态流转")).toBeInTheDocument();
     expect(screen.getByText("#1")).toBeInTheDocument();
   });
 });
