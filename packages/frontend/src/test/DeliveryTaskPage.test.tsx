@@ -95,4 +95,22 @@ describe("DeliveryTaskPage", () => {
     renderAt("/deliveries?role=courier&person=张三");
     expect(await screen.findByText(/暂无分配给 张三 的配送任务/)).toBeInTheDocument();
   });
+
+  it("推进失败（5xx）：错误行内渲染，任务列表+推进按钮保留可重试（Scene 6 审查 A / QA B5）", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.listDeliveries).mockResolvedValue([makeDelivery({ id: 9 })]);
+    vi.mocked(api.updateDeliveryStatus).mockRejectedValue(
+      new Error("服务器开小差"),
+    );
+    renderAt("/deliveries?role=courier&person=张三");
+
+    await user.click(await screen.findByTestId("delivery-push-btn"));
+
+    // 错误行内显示
+    expect(await screen.findByText("服务器开小差")).toBeInTheDocument();
+    // 任务列表不被 early-return 炸掉
+    expect(screen.getByTestId("delivery-task-item")).toBeInTheDocument();
+    // 推进按钮仍在 → 可重试
+    expect(screen.getByTestId("delivery-push-btn")).toBeInTheDocument();
+  });
 });

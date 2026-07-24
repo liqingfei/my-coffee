@@ -1,11 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { api } from "../api";
-import { useDeliveryAssign } from "../hooks/useDeliveryAssign";
+import { AssignDeliveryForm } from "../components/AssignDeliveryForm";
 import { useDeliveryStatusPush } from "../hooks/useDeliveryStatusPush";
 import { useRole } from "../hooks/useRole";
 import type { Delivery } from "../types";
-import { DELIVERY_FLOW, DELIVERY_STATUS_LABEL, nextDeliveryStatus } from "../types";
+import {
+  DELIVERY_FLOW,
+  DELIVERY_STATUS_LABEL,
+  canPushDelivery,
+  nextDeliveryStatus,
+} from "../types";
 
 // 配送追踪页：时间线 + 顾客信息；按角色条件渲染操作区（Scene 3 决策 3，同页不拆分）：
 //   管理员：可推进 + 分配配送员；配送员：仅可推进分配给自己的单；顾客：只读。
@@ -15,7 +20,6 @@ export function DeliveryPage() {
   const { role, person } = useRole();
   const [delivery, setDelivery] = useState<Delivery | null>(null);
   const [loadError, setLoadError] = useState("");
-  const [assignName, setAssignName] = useState("");
 
   const load = useCallback(() => {
     api
@@ -27,16 +31,13 @@ export function DeliveryPage() {
   useEffect(load, [load]);
 
   const { push, pushing, error: pushError } = useDeliveryStatusPush(load);
-  const { assign, assigning, error: assignError } = useDeliveryAssign(load);
 
   if (loadError) return <p className="error">{loadError}</p>;
   if (!delivery) return <p>加载中…</p>;
 
   const currentIdx = DELIVERY_FLOW.indexOf(delivery.status);
   const next = nextDeliveryStatus(delivery.status);
-  const canPush =
-    role === "admin" ||
-    (role === "courier" && !!person && delivery.deliveryPerson === person);
+  const canPush = canPushDelivery(role, person, delivery.deliveryPerson);
   const canAssign = role === "admin";
 
   return (
@@ -91,31 +92,7 @@ export function DeliveryPage() {
       )}
       {!next && <p>配送已完成。</p>}
 
-      {canAssign && (
-        <div className="form-block">
-          {assignError && <p className="error">{assignError}</p>}
-          <input
-            className="person-input"
-            data-testid="delivery-assign-input"
-            aria-label="分配配送员姓名"
-            placeholder="分配配送员姓名"
-            value={assignName}
-            onChange={(e) => setAssignName(e.target.value)}
-          />{" "}
-          <button
-            type="button"
-            className="btn"
-            data-testid="delivery-assign-submit"
-            disabled={assigning || !assignName.trim()}
-            onClick={() => {
-              assign(delivery.id, assignName);
-              setAssignName("");
-            }}
-          >
-            {assigning ? "分配中…" : "分配配送员"}
-          </button>
-        </div>
-      )}
+      {canAssign && <AssignDeliveryForm deliveryId={delivery.id} onChanged={load} />}
     </section>
   );
 }

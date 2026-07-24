@@ -97,3 +97,16 @@ export const ROLE_LABEL: Record<Role, string> = {
   courier: "配送员",
   customer: "顾客",
 };
+
+// 配送推进权限规则（UI 隔离，非安全边界，决策 5）：
+//   admin 可推进任意单；courier 仅推进分配给自己的单；customer 只读 → false。
+// 抽成纯函数供各页面复用（Scene 6 审查 B：消除逐字复制），守卫核心 deliveryPerson===person。
+export function canPushDelivery(
+  role: Role,
+  person: string,
+  deliveryPerson: string | null | undefined,
+): boolean {
+  if (role === "admin") return true;
+  if (role === "courier") return !!person && deliveryPerson === person;
+  return false;
+}
