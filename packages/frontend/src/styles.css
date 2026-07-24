@@ -53,6 +53,21 @@ body {
   font-weight: 600;
 }
 
+/* 全局角色切换器（UI 角色模拟）：复用 chip 样式，courier 附带姓名输入框 */
+.role-switcher {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.person-input {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 14px;
+  max-width: 140px;
+}
+
 .main {
   padding: 24px 16px 48px;
 }

@@ -48,5 +48,6 @@ model Delivery {
   status        String   @default("pending") @db.VarChar(20) // pending/picked_up/in_transit/delivered
   fee           Decimal  @default(5.0) @db.Decimal(10, 2) // 一期固定配送费 5 元
   estimatedTime Int? // 预计送达时间（分钟）
+  deliveryPerson String? @db.VarChar(100) // 配送员姓名，null=未分配（本期 UI 角色模拟，无认证，仅前端隔离）
   createdAt     DateTime @default(now())
 }

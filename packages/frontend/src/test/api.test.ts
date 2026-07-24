@@ -84,3 +84,37 @@ describe("api 其余方法与错误处理", () => {
     await expect(api.getOrder(1)).rejects.toThrow("请求失败(500)");
   });
 });
+
+describe("api 配送推进/分配/列表方法", () => {
+  it("listDeliveries：缺省全量 / 带配送员过滤（URL 编码）", async () => {
+    const fetchMock = stubFetch(jsonResponse([]));
+    await api.listDeliveries();
+    await api.listDeliveries("张三");
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/deliveries");
+    expect(fetchMock.mock.calls[1][0]).toBe(
+      "/api/deliveries?deliveryPerson=%E5%BC%A0%E4%B8%89",
+    );
+  });
+
+  it("updateDeliveryStatus：PATCH /:id/status 带序列化 body", async () => {
+    const fetchMock = stubFetch(jsonResponse({}));
+    await api.updateDeliveryStatus(9, "picked_up");
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/deliveries/9/status");
+    expect((init as RequestInit).method).toBe("PATCH");
+    expect((init as RequestInit).body).toBe(
+      JSON.stringify({ status: "picked_up" }),
+    );
+  });
+
+  it("assignDeliveryPerson：PATCH /:id/assign 带序列化 body", async () => {
+    const fetchMock = stubFetch(jsonResponse({}));
+    await api.assignDeliveryPerson(9, "张三");
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/deliveries/9/assign");
+    expect((init as RequestInit).method).toBe("PATCH");
+    expect((init as RequestInit).body).toBe(
+      JSON.stringify({ deliveryPerson: "张三" }),
+    );
+  });
+});

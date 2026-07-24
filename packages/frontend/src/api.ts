@@ -35,4 +35,24 @@ export const api = {
     http<Delivery>("/api/deliveries", { method: "POST", body: JSON.stringify({ orderId }) }),
 
   getDelivery: (id: string | number) => http<Delivery>(`/api/deliveries/${id}`),
+
+  // 配送单列表：deliveryPerson 缺省=全量（管理员）；传值=按配送员过滤（配送员己方任务）
+  listDeliveries: (deliveryPerson?: string) =>
+    http<Delivery[]>(
+      `/api/deliveries${deliveryPerson ? `?deliveryPerson=${encodeURIComponent(deliveryPerson)}` : ""}`,
+    ),
+
+  // 推进配送状态（后端状态机校验，非法流转抛错）
+  updateDeliveryStatus: (id: string | number, status: string) =>
+    http<Delivery>(`/api/deliveries/${id}/status`, {
+      method: "PATCH",
+      body: JSON.stringify({ status }),
+    }),
+
+  // 分配配送员
+  assignDeliveryPerson: (id: string | number, deliveryPerson: string) =>
+    http<Delivery>(`/api/deliveries/${id}/assign`, {
+      method: "PATCH",
+      body: JSON.stringify({ deliveryPerson }),
+    }),
 };
