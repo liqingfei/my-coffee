@@ -341,6 +341,60 @@ console.log("B4 刷新角色持久化");
   await ctx.close();
 }
 
+// ============ B5 DeliveryTaskPage 推进失败不炸整页（验证 item1 修复：pushError 行内渲染） ============
+console.log("B5 DeliveryTaskPage 推进5xx 列表不炸");
+{
+  const ctx = await browser.newContext(CTX_BASE);
+  const page = await ctx.newPage();
+  page.setDefaultTimeout(15000);
+  const { deliveryId } = await seedOrderDelivery("B5");
+  const me = "张三-B5";
+  await api(`/deliveries/${deliveryId}/assign`, {
+    method: "PATCH", body: JSON.stringify({ deliveryPerson: me }),
+  });
+  await page.goto(`${BASE}/deliveries?role=courier&person=${encodeURIComponent(me)}`);
+  await page.waitForSelector(T.taskItem);
+  const before = await page.locator(T.taskItem).count();
+  // 拦截 PATCH status 返回 500，模拟推进失败
+  await page.route("**/api/deliveries/*/status", (route) =>
+    route.fulfill({ status: 500, body: JSON.stringify({ error: "mock 500" }) }),
+  );
+  await page.locator(T.pushBtn).first().click();
+  await page.waitForTimeout(600);
+  const after = await page.locator(T.taskItem).count();
+  // 关键：推进失败后任务列表行仍在（不能 early-return 整页炸掉）
+  check("B5 推进5xx 后任务列表行仍在", after === before && after > 0, `(before=${before} after=${after})`);
+  // 整页不应只剩一行 error（页面骨架仍在）
+  const pageHasErrorOnly = (await page.locator("main p.error").count()) > 0 && after === 0;
+  check("B5 未退化为整页 error", !pageHasErrorOnly);
+  await ctx.close();
+}
+
+// ============ E8 courier 看他人配送单 → 守卫无推进入口（item4 守卫） ============
+console.log("E8 courier 看他人单 守卫无推进");
+{
+  const ctx = await browser.newContext(CTX_BASE);
+  const page = await ctx.newPage();
+  page.setDefaultTimeout(15000);
+  const { deliveryId } = await seedOrderDelivery("E8");
+  const owner = "张三-E8";
+  await api(`/deliveries/${deliveryId}/assign`, {
+    method: "PATCH", body: JSON.stringify({ deliveryPerson: owner }),
+  });
+  // 以「李四」身份直访张三的配送单 → 守卫应隐藏推进/分配入口
+  await page.goto(`${BASE}/delivery/${deliveryId}?role=courier&person=${encodeURIComponent("李四-E8")}`);
+  await page.waitForTimeout(400);
+  const pushCount = await page.locator(T.pushBtn).count();
+  const assignCount = await page.locator(T.assignInput).count();
+  check("E8 courier 看他人单 无 push-btn", pushCount === 0, `(push=${pushCount})`);
+  check("E8 courier 看他人单 无 assign 入口", assignCount === 0, `(assign=${assignCount})`);
+  // 切回本人 → 推进入口复现（守卫可逆）
+  await page.goto(`${BASE}/delivery/${deliveryId}?role=courier&person=${encodeURIComponent(owner)}`);
+  await page.waitForTimeout(400);
+  check("E8 切回本人后 push-btn 复现", (await page.locator(T.pushBtn).count()) > 0);
+  await ctx.close();
+}
+
 await browser.close();
 console.log(`\n=== E2E 配送推进 结果: ${pass} passed, ${fail} failed ===`);
 process.exit(fail > 0 ? 1 : 0);
